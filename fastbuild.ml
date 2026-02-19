@@ -106,7 +106,9 @@ struct
                 (* must use canonicalized version of key *)
                 Good (Keydb.key_to_metadata ckey)
             with
-                Fixkey.Bad_key -> Bad
+              | Fixkey.Bad_key
+              | Fixkey.Key_too_large
+              | Fixkey.Standalone_revocation_certificate -> Bad
           end
       | None ->
           Done
