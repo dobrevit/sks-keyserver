@@ -342,14 +342,37 @@ let parse_signature packet =
               }
 
 
-    | 5 | 6 ->
-        (* v5/v6 signatures: same structure as v4 but with 4-byte subpacket
-           lengths and a salt field after hash_value *)
+    | 5 ->
+        (* v5 signatures (LibrePGP): same structure as v4 with 2-byte
+           subpacket lengths. v5 keys typically produce v4 signatures,
+           but handle v5 version gracefully if encountered. *)
         let sigtype = cin#read_byte in
         let pk_alg = cin#read_byte in
         let _hash_alg = cin#read_byte in
 
-        (* v6 uses 4-byte subpacket length fields *)
+        let hashed_subpacket_bytes = cin#read_int_size 2 in
+        let hashed_subpackets = read_subpackets cin hashed_subpacket_bytes in
+
+        let unhashed_subpacket_bytes = cin#read_int_size 2 in
+        let unhashed_subpackets = read_subpackets cin unhashed_subpacket_bytes in
+
+        let hash_value = cin#read_string 2 in
+        let mpis = read_mpis cin in
+        V4sig { v4s_sigtype = sigtype;
+                v4s_pk_alg = pk_alg;
+                v4s_hashed_subpackets = hashed_subpackets;
+                v4s_unhashed_subpackets = unhashed_subpackets;
+                v4s_hash_value = hash_value;
+                v4s_mpis = mpis;
+              }
+
+    | 6 ->
+        (* v6 signatures (RFC 9580): 4-byte subpacket length fields,
+           salt field between hash_value and signature MPIs *)
+        let sigtype = cin#read_byte in
+        let pk_alg = cin#read_byte in
+        let _hash_alg = cin#read_byte in
+
         let hashed_subpacket_bytes = cin#read_int_size 4 in
         let hashed_subpackets = read_subpackets cin hashed_subpacket_bytes in
 
@@ -357,7 +380,9 @@ let parse_signature packet =
         let unhashed_subpackets = read_subpackets cin unhashed_subpacket_bytes in
 
         let hash_value = cin#read_string 2 in
-        (* salt and signature MPIs follow but we don't need them for indexing *)
+        (* v6 has a salt field (length depends on hash algorithm) followed
+           by signature MPIs; we skip parsing these as they are not needed
+           for key indexing or display *)
         let mpis = (try read_mpis cin with _ -> []) in
         V4sig { v4s_sigtype = sigtype;
                 v4s_pk_alg = pk_alg;

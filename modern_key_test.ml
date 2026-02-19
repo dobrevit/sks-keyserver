@@ -53,9 +53,18 @@ let make_pubkey_body version =
      cout#write_byte 0x00; cout#write_byte 0x10;
      cout#write_byte 0x00; cout#write_byte 0x01;
    | 4 ->
-     (* algorithm: Ed25519 (27) *)
-     cout#write_byte 27;
-     (* minimal key material - just 32 bytes *)
+     (* algorithm: EdDSA (22) -- v4 uses algorithm 22 with MPI encoding *)
+     cout#write_byte 22;
+     (* OID for Ed25519: 1.3.6.1.4.1.11591.15.1 *)
+     cout#write_byte 9; (* OID length *)
+     cout#write_byte 0x2b; cout#write_byte 0x06;
+     cout#write_byte 0x01; cout#write_byte 0x04;
+     cout#write_byte 0x01; cout#write_byte 0xda;
+     cout#write_byte 0x47; cout#write_byte 0x0f;
+     cout#write_byte 0x01;
+     (* MPI: 263 bits = 0x0107, followed by 0x40 prefix + 32 bytes *)
+     cout#write_byte 0x01; cout#write_byte 0x07;
+     cout#write_byte 0x40;
      for _i = 0 to 31 do cout#write_byte 0xAB done;
    | 5 | 6 ->
      (* algorithm: Ed25519 (27) *)
@@ -211,7 +220,11 @@ let test_parse_keystr_v5 () =
   let sig_pack = make_sig_packet () in
   let sub_pack = make_subkey_packet 5 in
   let key = [key_pack; sig_pack; uid_pack; sig_pack; sub_pack; sig_pack] in
-  let pkey = (try Some (KeyMerge.key_to_pkey key) with _ -> None) in
+  let pkey =
+    (try Some (KeyMerge.key_to_pkey key)
+     with KeyMerge.Unparseable_packet_sequence -> None
+        | e -> printf "\n  unexpected exception in v5 parse: %s"
+                 (Printexc.to_string e); None) in
   test "v5 parse_keystr succeeds" (pkey <> None);
   (match pkey with
    | Some pk ->
@@ -227,7 +240,11 @@ let test_parse_keystr_v6 () =
   let uid_pack = make_uid_packet "Test User v6 <v6@example.com>" in
   let sig_pack = make_sig_packet () in
   let key = [key_pack; sig_pack; uid_pack; sig_pack] in
-  let pkey = (try Some (KeyMerge.key_to_pkey key) with _ -> None) in
+  let pkey =
+    (try Some (KeyMerge.key_to_pkey key)
+     with KeyMerge.Unparseable_packet_sequence -> None
+        | e -> printf "\n  unexpected exception in v6 parse: %s"
+                 (Printexc.to_string e); None) in
   test "v6 parse_keystr succeeds" (pkey <> None);
   (match pkey with
    | Some pk ->
@@ -242,10 +259,15 @@ let test_parse_keystr_unknown () =
   let key_pack = make_packet ~content_tag:6
       ~packet_type:Public_Key_Packet ~body in
   let result =
-    (try ignore (KeyMerge.key_to_pkey [key_pack]); false
-     with KeyMerge.Unparseable_packet_sequence -> true
-        | _ -> false) in
-  test "unknown version raises Unparseable" result
+    (try ignore (KeyMerge.key_to_pkey [key_pack]); `no_exception
+     with KeyMerge.Unparseable_packet_sequence -> `ok
+        | e -> `wrong_exception e) in
+  test "unknown version raises Unparseable" (result = `ok);
+  (match result with
+   | `wrong_exception e ->
+     printf "\n  expected Unparseable_packet_sequence, got: %s"
+       (Printexc.to_string e)
+   | _ -> ())
 
 (* ============================================================ *)
 (* Poison key defense tests                                     *)

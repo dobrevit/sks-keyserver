@@ -133,8 +133,11 @@ let is_revocation_signature pack =
     | _ -> false
 
 let key_serialized_size key =
+  (* +6 is a conservative upper bound for packet header overhead:
+     1 byte tag + up to 5 bytes for new-format length encoding.
+     This slightly overestimates but ensures we never undercount. *)
   List.fold_left ~init:0 ~f:(fun acc pack ->
-    acc + String.length pack.packet_body + 6 (* header overhead *)
+    acc + String.length pack.packet_body + 6
   ) key
 
 let check_key_size key =
