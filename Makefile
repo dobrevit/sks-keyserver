@@ -48,7 +48,7 @@ SKSVS=$(shell grep 'version_suffix = "+"' common.ml)
 ifeq ($(strip $(SKSVS)),)
 WARNERR=
 else
-WARNERR=-warn-error A-6
+WARNERR=-warn-error A
 endif
 
 CAMLINCLUDE= -package cryptokit,unix,str,num -I bdb

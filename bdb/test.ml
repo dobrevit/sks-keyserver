@@ -35,16 +35,16 @@ let _ = Random.self_init ()
 
 let chars = "abcdefghijklmnopqrstuvwxyz123456789"
 let rand_string len =
-  let s = String.create len in
-  for i = 0 to String.length s - 1 do
-    s.[i] <- chars.[Random.int (String.length chars)]
+  let s = Bytes.create len in
+  for i = 0 to Bytes.length s - 1 do
+    Bytes.set s i chars.[Random.int (String.length chars)]
   done;
-  s
+  Bytes.unsafe_to_string s
 
 let prepare_dir dirname =
   if MUnix.exists dirname then
     ignore (Unix.system (sprintf "rm -r %s" dirname));
-  Unix.mkdir dirname
+  Unix.mkdir dirname ~perm:0o755
 
 let prepare_file fname =
   if MUnix.exists fname then Unix.unlink fname

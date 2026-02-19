@@ -51,15 +51,15 @@ let get_keys_by_keyid keyid =
            ~f:(fun key -> keyid = (Fingerprint.from_key key).Fingerprint.keyid ||
            (** Return keys i& subkeys with matching long keyID *)
              let (mainkeyid,subkeyids) = Fingerprint.keyids_from_key ~short:false key in
-             List.exists (fun x -> x = keyid) subkeyids)
+             List.exists ~f:(fun x -> x = keyid) subkeyids)
 
       | _ -> failwith "Unknown keyid type"
 
 let dump_one_key keyid =
   let deprefixed =
     if String.length keyid <= 2 then exit 3
-    else if String.sub keyid 0 2 = "0x"
-    then String.sub keyid 2 (String.length keyid - 2)
+    else if String.sub keyid ~pos:0 ~len:2 = "0x"
+    then String.sub keyid ~pos:2 ~len:(String.length keyid - 2)
     else keyid
   in
   let keys = get_keys_by_keyid (KeyHash.dehexify deprefixed) in

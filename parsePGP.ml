@@ -240,7 +240,9 @@ let parse_pubkey_info packet =
     pk_ctime = creation_time;
     pk_expiration = (match expiration with Some 0 -> None | x -> x);
     pk_alg = algorithm;
-    pk_keylen = (match algorithm with |18|19|22 -> psize | _ -> mpi.mpi_bits);
+    pk_keylen = (match algorithm with
+                 | 18 | 19 | 22 -> if psize > 0 then psize else mpi.mpi_bits
+                 | _ -> mpi.mpi_bits);
   }
 
 (********************************************************)

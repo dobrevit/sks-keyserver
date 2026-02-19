@@ -87,10 +87,10 @@ let decode s =
     if String.length s > 0 then
       if s.[0] == ' ' then
         strip_heading_and_trailing_spaces
-          (String.sub s 1 (String.length s - 1))
+          (String.sub s ~pos:1 ~len:(String.length s - 1))
       else if s.[String.length s - 1] == ' ' then
         strip_heading_and_trailing_spaces
-          (String.sub s 0 (String.length s - 1))
+          (String.sub s ~pos:0 ~len:(String.length s - 1))
       else s
     else s
   in
@@ -101,7 +101,7 @@ let decode s =
   else s
 
 
-let special x = List.mem x ['='; '&'; '"'; '\r'; '\n'; '+']
+let special x = List.mem x ~set:['='; '&'; '"'; '\r'; '\n'; '+']
 
 let encode s =
   let rec need_code i =
@@ -218,7 +218,7 @@ let headers_to_string map =
   let pieces = List.map ~f:(fun (x,y) -> sprintf "%s:%s" x y)
                  (Map.to_alist map)
   in
-  "\n" ^ (String.concat "\n" pieces)
+  "\n" ^ (String.concat ~sep:"\n" pieces)
 
 let request_to_string request =
   let (kind,req,headers) =
