@@ -55,7 +55,9 @@ module F(M:sig end) = struct
           (try
              (Fixkey.canonicalize key)::acc
            with
-               Fixkey.Bad_key -> acc
+             | Fixkey.Bad_key
+             | Fixkey.Key_too_large
+             | Fixkey.Standalone_revocation_certificate -> acc
           )
       | None -> acc
     in
