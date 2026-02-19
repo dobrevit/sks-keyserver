@@ -60,5 +60,7 @@ struct camltxn {
 #define Is_string(v)   (Is_block(v) && (Tag_val(v) == String_tag))
 #define Is_None(v)  (!Is_block(v))
 #define Is_Some(v)  (Is_block(v))
+#ifndef Some_val
 #define Some_val(v) (Field(v,0))
+#endif
 #define Flag_val(vflag,flags) (flags[Long_val(vflag)])

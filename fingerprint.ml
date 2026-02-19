@@ -93,8 +93,45 @@ let from_packet packet =
           keyid = keyid;
         }
 
+    | 5 ->
+        (* v5: SHA-256 of 0x9A + 4-byte big-endian length + packet body *)
+        let hash = Cryptokit.Hash.sha256 () in
+        hash#add_byte 0x9A;
+        hash#add_byte ((packet.packet_length lsr 24) land 0xFF);
+        hash#add_byte ((packet.packet_length lsr 16) land 0xFF);
+        hash#add_byte ((packet.packet_length lsr 8) land 0xFF);
+        hash#add_byte (packet.packet_length land 0xFF);
+        hash#add_string packet.packet_body;
+        let fingerprint = hash#result in
+        (* v5 keyid: first 8 bytes of fingerprint *)
+        let keyid = String.sub fingerprint ~pos:0 ~len:8 in
+        hash#wipe;
+        { fp = fingerprint;
+          keyid = keyid;
+        }
+
+    | 6 ->
+        (* v6: SHA-256 of 0x9B + 4-byte big-endian length + packet body *)
+        let hash = Cryptokit.Hash.sha256 () in
+        hash#add_byte 0x9B;
+        hash#add_byte ((packet.packet_length lsr 24) land 0xFF);
+        hash#add_byte ((packet.packet_length lsr 16) land 0xFF);
+        hash#add_byte ((packet.packet_length lsr 8) land 0xFF);
+        hash#add_byte (packet.packet_length land 0xFF);
+        hash#add_string packet.packet_body;
+        let fingerprint = hash#result in
+        (* v6 keyid: first 8 bytes of fingerprint *)
+        let keyid = String.sub fingerprint ~pos:0 ~len:8 in
+        hash#wipe;
+        { fp = fingerprint;
+          keyid = keyid;
+        }
+
     | _ ->
-        failwith "Fingerprint.from_packet: Unexpected version number"
+        (* Unknown version: return empty fingerprint to avoid crash *)
+        { fp = "";
+          keyid = "\x00\x00\x00\x00\x00\x00\x00\x00";
+        }
 
 let rec from_key key = match key with
     packet::key_tail ->
@@ -105,13 +142,19 @@ let rec from_key key = match key with
       raise Not_found
 
 let fp_to_string fp =
-  let bs = if (String.length fp) = 20 then 4 else 2 in
+  let fplen = String.length fp in
+  let bs = if fplen = 20 || fplen = 32 then 4 else 2 in
   (* standard practice is to bunch long fingerprints by 4 and short ones by
      2.  An extra space is added in the middle *)
   let hex = Utils.hexstring fp in
   let buf = Buffer.create 0 in
-  let extraspace_pos = if (String.length fp) = 20 then 4 else 7 in
-  for i = 0 to String.length hex / bs - 1 do
+  let num_groups = String.length hex / bs in
+  let extraspace_pos =
+    if fplen = 20 then 4
+    else if fplen = 32 then 7 (* midpoint of 16 groups *)
+    else 7
+  in
+  for i = 0 to num_groups - 1 do
     Buffer.add_substring buf hex (i * bs) bs;
     Buffer.add_string buf " ";
     if i = extraspace_pos then Buffer.add_string buf " "

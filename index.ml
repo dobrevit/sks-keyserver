@@ -122,6 +122,22 @@ let sig_to_siginfo sign =
                   else
                     printf "Argh!  that makes no sense: %d\n" ssp.ssp_length
 
+              | 33 -> (* issuer fingerprint -- v4/v5/v6 *)
+                  (* Extract keyid from fingerprint if we don't already have one *)
+                  if siginfo.keyid = None && ssp.ssp_length >= 9 then begin
+                    let fp_version = int_of_char ssp.ssp_body.[0] in
+                    match fp_version with
+                    | 4 when ssp.ssp_length = 21 ->
+                        (* v4: keyid = last 8 bytes of 20-byte fingerprint *)
+                        siginfo.keyid <- Some (String.sub ssp.ssp_body
+                                                 ~pos:13 ~len:8)
+                    | 5 | 6 when ssp.ssp_length = 33 ->
+                        (* v5/v6: keyid = first 8 bytes of 32-byte fingerprint *)
+                        siginfo.keyid <- Some (String.sub ssp.ssp_body
+                                                 ~pos:1 ~len:8)
+                    | _ -> ()
+                  end
+
               | 20 -> (* notation data *)
                   let cin = new Channel.string_in_channel ssp.ssp_body 0 in
                   let flags = cin#read_string 4 in
@@ -396,7 +412,7 @@ let key_packet_to_line ~is_subkey pki keyid =
   let prefix = if is_subkey then "<strong>sub</strong>" else "<strong>pub</strong>" in
   let creation_string = datestr_of_int64 pki.pk_ctime in
   let expiration_string =
-    if pki.pk_version = 4 then no_datestr
+    if pki.pk_version >= 4 then no_datestr
     else
       match pki.pk_expiration with
         | None -> blank_datestr

@@ -41,6 +41,8 @@ type ptype = | Reserved
              | Sym_Encrypted_and_Integrity_Protected_Data_Packet
              | Modification_Detection_Code_Packet
              | Public_Subkey_Packet
+             | AEAD_Encrypted_Data_Packet
+             | Padding_Packet
              | Private_or_Experimental_ptype
              | Unexpected_ptype
 
@@ -81,8 +83,14 @@ let ssp_type_to_string i = match i with
   | 30 -> "features"
   | 31 -> "signature target"
   | 32 -> "embedded signature"
+  | 33 -> "issuer fingerprint"
+  | 34 -> "intended recipient fingerprint"
+  | 35 -> "attested certifications"
+  | 37 -> "preferred AEAD ciphersuites"
+  | 38 -> "key or subpacket expiration"
+  | 39 -> "preferred AEAD algorithms"
   | x when x >= 100 && x <= 110 -> "internal or user-defined"
-  | _ -> failwith "Unexpected sigsubpacket type"
+  | _ -> "unknown sigsubpacket type"
 
 type key = packet list
 
@@ -123,6 +131,8 @@ let content_tag_to_ptype tag = match tag with
     | 17 -> User_Attribute_Packet
     | 18 -> Sym_Encrypted_and_Integrity_Protected_Data_Packet
     | 19 -> Modification_Detection_Code_Packet
+    | 20 -> AEAD_Encrypted_Data_Packet
+    | 21 -> Padding_Packet
     | 60 | 61 | 62 | 63 -> Private_or_Experimental_ptype
     | _ -> Unexpected_ptype
 
@@ -146,6 +156,8 @@ let ptype_to_string ptype = match ptype with
     | Sym_Encrypted_and_Integrity_Protected_Data_Packet ->
         "Sym Encrypted and Integrity Protected Data Packet"
     | Modification_Detection_Code_Packet         -> "Modification Detection Code Packet"
+    | AEAD_Encrypted_Data_Packet                 -> "AEAD Encrypted Data Packet"
+    | Padding_Packet                             -> "Padding Packet"
     | Private_or_Experimental_ptype              -> "Private or Experimental Values"
     | Unexpected_ptype                           -> "Unexpected value"
 
@@ -164,6 +176,10 @@ let pubkey_algorithm_string i =  match i with
   | 20 -> "Elgamal (Encrypt or Sign)"
   | 21 -> "Reserved for Diffie-Hellman (X9.42) as defined for IETF-S/MIME"
   | 22 -> "EdDSA"
+  | 25 -> "X25519"
+  | 26 -> "X448"
+  | 27 -> "Ed25519"
+  | 28 -> "Ed448"
   | x when x >= 100 && x <= 110 -> "Private/Experimental algorithm."
   | _ -> "Unknown Public Key Algorithm"
 
@@ -258,6 +274,10 @@ let pk_alg_to_ident i = match i with
   | 19 -> "E"  (* ECDSA *)
   | 20 -> "G"  (* ElGamal sign and encrypt *)
   | 22 -> "E"  (* EdDSA *)
+  | 25 -> "e"  (* X25519 *)
+  | 26 -> "e"  (* X448 *)
+  | 27 -> "E"  (* Ed25519 *)
+  | 28 -> "E"  (* Ed448 *)
   | _  -> "?"  (* NoClue *)
 
 (** writes out packet, using old-style packets when possible *)

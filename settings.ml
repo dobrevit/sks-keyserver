@@ -244,6 +244,23 @@ let dumpdir = lazy (Filename.concat !basedir base_dumpdir)
 let msgdir = lazy (Filename.concat !basedir base_msgdir)
 let failed_msgdir = lazy (Filename.concat !basedir base_failed_msgdir)
 
+(** Poison key defense limits (CVE-2019-13050) *)
+
+let max_sigs_per_uid = ref 1000
+let set_max_sigs_per_uid value = max_sigs_per_uid := value
+
+let max_uids_per_key = ref 200
+let set_max_uids_per_key value = max_uids_per_key := value
+
+let max_subkeys_per_key = ref 50
+let set_max_subkeys_per_key value = max_subkeys_per_key := value
+
+let max_key_size = ref 262144
+let set_max_key_size value = max_key_size := value
+
+let max_selfsigs = ref 200
+let set_max_selfsigs value = max_selfsigs := value
+
 (*****************************************************************)
 
 (** Specifies the options along with the corresponding actions.
@@ -355,6 +372,16 @@ let parse_spec =
      " Read keyids from stdin (sksclient only)");
     ("-server_contact", Arg.String set_server_contact,
      " Set OpenPGP KeyID of the server contact");
+    ("-max_sigs_per_uid", Arg.Int set_max_sigs_per_uid,
+     " Maximum number of signatures per UID/subkey (poison key defense)");
+    ("-max_uids_per_key", Arg.Int set_max_uids_per_key,
+     " Maximum number of UIDs per key (poison key defense)");
+    ("-max_subkeys_per_key", Arg.Int set_max_subkeys_per_key,
+     " Maximum number of subkeys per key (poison key defense)");
+    ("-max_key_size", Arg.Int set_max_key_size,
+     " Maximum total key size in bytes (poison key defense)");
+    ("-max_selfsigs", Arg.Int set_max_selfsigs,
+     " Maximum number of self-signatures per key (poison key defense)");
   ]
 
 let parse_spec = Arg.align parse_spec

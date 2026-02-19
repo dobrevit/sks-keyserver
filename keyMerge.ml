@@ -116,7 +116,7 @@ let get_version packet =
 
 let key_to_stream key =
   let ptype_list = List.map ~f:(fun pack -> (pack.packet_type,pack)) key in
-  Stream.of_list ptype_list
+  SStream.of_list ptype_list
 
 
 
@@ -134,20 +134,20 @@ let parse_list parser strm =
   loop parser strm []
 
 let parse_sig strm =
-  match Stream.peek strm with
+  match SStream.peek strm with
   | Some (Signature_Packet, p) ->
-    Stream.junk strm;
+    SStream.junk strm;
     Some p
   | _ -> None
 
 let parse_uid strm =
-  match Stream.peek strm with
+  match SStream.peek strm with
   | Some (User_ID_Packet, p) ->
-    Stream.junk strm;
+    SStream.junk strm;
     let sigs = parse_list parse_sig strm in
     Some (p, sigs)
   | Some ((User_Attribute_Packet, p)) ->
-    Stream.junk strm;
+    SStream.junk strm;
     let sigs = parse_list parse_sig strm in
     Some (p, sigs)
   | _ ->
@@ -160,19 +160,19 @@ let parse_uid strm =
     None
 
 let parse_subkey strm =
-  match Stream.peek strm with
+  match SStream.peek strm with
   | Some (Public_Subkey_Packet, p) ->
-    Stream.junk strm;
+    SStream.junk strm;
     let sigs = parse_list parse_sig strm in
     Some (p, sigs)
   | _ -> None
 
 let parse_keystr strm =
-  match Stream.peek strm with
+  match SStream.peek strm with
   | Some (Public_Key_Packet, key) ->
-    Stream.junk strm;
+    SStream.junk strm;
     begin match get_version key with
-    | 4 ->
+    | 4 | 5 | 6 ->
       let selfsigs = parse_list parse_sig strm in
       let uids = parse_list parse_uid strm in
       let subkeys = parse_list parse_subkey strm in
@@ -182,9 +182,38 @@ let parse_keystr strm =
       let uids = parse_list parse_uid strm in
       { key; selfsigs = revocations; uids; subkeys = []; }
     | _ ->
-      failwith "Unexpected key packet version number"
+      raise Unparseable_packet_sequence
     end
-  | _ -> raise Stream.Failure
+  | _ -> raise Unparseable_packet_sequence
+
+(*******************************************************************)
+(*** Truncation helpers for poison key defense (CVE-2019-13050) ***)
+(*******************************************************************)
+
+let truncate_list n lst =
+  if List.length lst <= n then lst
+  else
+    let rec loop acc n = function
+      | [] -> List.rev acc
+      | _ when n <= 0 -> List.rev acc
+      | x :: tl -> loop (x :: acc) (n - 1) tl
+    in loop [] n lst
+
+let truncate_sigpairs max_sigs pairs =
+  List.map pairs ~f:(fun (pack, sigs) ->
+    let truncated = truncate_list max_sigs sigs in
+    if List.length truncated < List.length sigs then
+      plerror 3 "Truncated signatures on packet from %d to %d"
+        (List.length sigs) (List.length truncated);
+    (pack, truncated))
+
+let apply_limits pkey =
+  let selfsigs = truncate_list !Settings.max_selfsigs pkey.selfsigs in
+  let uids = truncate_list !Settings.max_uids_per_key pkey.uids in
+  let subkeys = truncate_list !Settings.max_subkeys_per_key pkey.subkeys in
+  let uids = truncate_sigpairs !Settings.max_sigs_per_uid uids in
+  let subkeys = truncate_sigpairs !Settings.max_sigs_per_uid subkeys in
+  { pkey with selfsigs; uids; subkeys; }
 
 (*******************************************************************)
 (*** Key Merging Code  *********************************************)
@@ -218,28 +247,26 @@ let merge_pkeys key1 key2 =
   if not (packets_equal key1.key key2.key)
   then None (* merge can only work if keys are the same *)
   else
-    Some { key = key1.key;
-           selfsigs = Utils.dedup (key1.selfsigs @ key2.selfsigs);
-           (* this might be wrong.  Must the revocations
-              be separated out to go before the other self
-              signatures? *)
-           uids = merge_sigpair_lists key1.uids key2.uids;
-           subkeys = merge_sigpair_lists key1.subkeys key2.subkeys;
-         }
+    Some (apply_limits
+      { key = key1.key;
+        selfsigs = Utils.dedup (key1.selfsigs @ key2.selfsigs);
+        (* this might be wrong.  Must the revocations
+           be separated out to go before the other self
+           signatures? *)
+        uids = merge_sigpair_lists key1.uids key2.uids;
+        subkeys = merge_sigpair_lists key1.subkeys key2.subkeys;
+      })
 
 (*******************************************************************)
 (*******************************************************************)
 (*******************************************************************)
 
 let key_to_pkey key =
-  try
-    let keystream = key_to_stream key in
-    let pkey = parse_keystr keystream in
-    Stream.empty keystream;
-    pkey
-  with
-      Stream.Failure | Stream.Error _ ->
-        raise Unparseable_packet_sequence
+  let keystream = key_to_stream key in
+  let pkey = parse_keystr keystream in
+  if not (SStream.is_empty keystream) then
+    raise Unparseable_packet_sequence;
+  pkey
 
 
 let merge key1 key2 =
@@ -266,11 +293,12 @@ let dedup_sigpairs pairs =
 
 
 let dedup_pkey pkey =
-  { pkey with
-      selfsigs = Utils.dedup pkey.selfsigs;
-      uids = dedup_sigpairs pkey.uids;
-      subkeys = dedup_sigpairs pkey.subkeys;
-  }
+  apply_limits
+    { pkey with
+        selfsigs = Utils.dedup pkey.selfsigs;
+        uids = dedup_sigpairs pkey.uids;
+        subkeys = dedup_sigpairs pkey.subkeys;
+    }
 
 let dedup_key key = flatten (dedup_pkey (key_to_pkey key))
 

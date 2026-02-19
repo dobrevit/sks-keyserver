@@ -17,6 +17,8 @@ type ptype =
   | Sym_Encrypted_and_Integrity_Protected_Data_Packet
   | Modification_Detection_Code_Packet
   | Public_Subkey_Packet
+  | AEAD_Encrypted_Data_Packet
+  | Padding_Packet
   | Private_or_Experimental_ptype
   | Unexpected_ptype
 type packet = {

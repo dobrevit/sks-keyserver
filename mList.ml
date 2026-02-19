@@ -200,7 +200,7 @@ let pri_split pri list =
   (low,exact,high)
 
 let has_dups list =
-  let slist = List.sort compare list in
+  let slist = List.sort ~cmp:compare list in
   let rec dup_scan list = match list with
     [] -> false
   | hd::[] -> false
@@ -208,7 +208,7 @@ let has_dups list =
   in dup_scan slist
 
 let dedup list =
-  let slist = List.sort compare list in
+  let slist = List.sort ~cmp:compare list in
   let rec dedup ~list ~partial = match list with
       [] -> partial
     | hd::[] -> dedup ~list:[] ~partial:(hd::partial)

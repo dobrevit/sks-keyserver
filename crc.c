@@ -51,7 +51,7 @@ value caml_crc_octets(value data) {
   CAMLparam1(data);
   CAMLlocal1(rval);
   unsigned const char *octets = String_val(data);
-  size_t len = string_length(data);
+  size_t len = caml_string_length(data);
   long crc = crc_octets(octets,len);
 
   rval = Val_int(crc);
@@ -63,8 +63,8 @@ value caml_get_tzname(value none) {
   CAMLparam1(none);
   CAMLlocal1(rval);
   tzset();
-  rval = alloc_tuple(2);
-  Store_field(rval,0,copy_string(tzname[0]));
-  Store_field(rval,1,copy_string(tzname[1]));
+  rval = caml_alloc_tuple(2);
+  Store_field(rval,0,caml_copy_string(tzname[0]));
+  Store_field(rval,1,caml_copy_string(tzname[1]));
   CAMLreturn(rval);
 }

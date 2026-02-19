@@ -1,5 +1,8 @@
 exception Bad_key
+exception Key_too_large
 exception Standalone_revocation_certificate
+val key_serialized_size : Packet.packet list -> int
+val check_key_size : Packet.packet list -> unit
 val filters : string list
 val get_keypacket : KeyMerge.pkey -> Packet.packet
 val ( |= ) : ('a, 'b) PMap.Map.t -> 'a -> 'b

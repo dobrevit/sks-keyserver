@@ -45,5 +45,15 @@ let junk s =
   then ignore (s.next ())
   else s.first <- None
 
+let of_list lst =
+  let r = ref lst in
+  make (fun () ->
+    match !r with
+    | [] -> None
+    | x :: tl -> r := tl; Some x)
+
+let is_empty s =
+  peek s = None
+
 
 

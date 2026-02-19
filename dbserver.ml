@@ -170,6 +170,12 @@ struct
               let (mainkeyfp,subkeyfps) = Fingerprint.fps_from_key key in
               List.exists (fun x -> x = keyid) subkeyfps)
 
+      | 32 -> (* 256-bit v5/v6 fingerprint *)
+          List.filter keys
+          ~f:(fun key -> keyid = (Fingerprint.from_key key).Fingerprint.fp ||
+              let (mainkeyfp,subkeyfps) = Fingerprint.fps_from_key key in
+              List.exists (fun x -> x = keyid) subkeyfps)
+
       | 16 -> (* 128-bit v3 fingerprint.  Not supported *)
           failwith "128-bit v3 fingerprints not implemented"
 
@@ -514,6 +520,12 @@ struct
                               plerror 2 "key %s %s"
                                 (KeyHash.hexify (KeyHash.hash origkey))
                                 "could not be parsed by KeyMerge.canonicalize"
+                          | Fixkey.Key_too_large ->
+                              cout#write_string
+                              ("Add failed: Key too large --- key exceeds " ^
+                               "maximum allowed size<br>");
+                              plerror 2 "key %s rejected: exceeds max_key_size"
+                                (KeyHash.hexify (KeyHash.hash origkey))
                           | Fixkey.Standalone_revocation_certificate ->
                                cout#write_string ("Add failed: This is a stand-alone " ^
                                                   "revocation certificate. A revocation " ^
@@ -595,7 +607,11 @@ struct
           let keys = List.fold_left ~init:[] keys
                        ~f:(fun list key ->
                              try (Fixkey.canonicalize key)::list
-                             with KeyMerge.Unparseable_packet_sequence | Fixkey.Bad_key -> list
+                             with
+                             | KeyMerge.Unparseable_packet_sequence | Fixkey.Bad_key -> list
+                             | Fixkey.Key_too_large ->
+                                 plerror 2 "Skipping oversized key from recon";
+                                 list
                           )
           in
           marshal cout (Ack 0);
