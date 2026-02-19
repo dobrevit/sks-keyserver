@@ -156,7 +156,7 @@ and help () =
             Format.print_string " ";
             Format.print_string c.usage);
           Format.print_string ":  ";
-          List.iter (fun s ->
+          List.iter ~f:(fun s ->
                        Format.print_string s;
                        Format.print_space ();)
             (Str.split space c.desc);

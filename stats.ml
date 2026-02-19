@@ -126,7 +126,7 @@ let histogram_to_table time_to_string histogram =
   in
   "<table summary=\"Statistics\" border=\"1\">\n" ^
   "<tr><td>Time</td><td>New Keys</td><td>Updated Keys</td></tr>\n" ^
-  String.concat "\n" table_entries ^
+  String.concat ~sep:"\n" table_entries ^
   "\n</table>\n"
 
 

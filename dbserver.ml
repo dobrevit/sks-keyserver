@@ -161,20 +161,20 @@ struct
           ~f:(fun key -> keyid = (Fingerprint.from_key key).Fingerprint.keyid ||
           (** Return keys i& subkeys with matching long keyID *)
              let (mainkeyid,subkeyids) = Fingerprint.keyids_from_key ~short:false key in
-             List.exists (fun x -> x = keyid) subkeyids)
+             List.exists ~f:(fun x -> x = keyid) subkeyids)
 
       | 20 -> (* 160-bit v. 4 fingerprint *)
           List.filter keys
           ~f:(fun key -> keyid = (Fingerprint.from_key key).Fingerprint.fp ||
           (** Return keys & subkeys with matching fingerprints *)
               let (mainkeyfp,subkeyfps) = Fingerprint.fps_from_key key in
-              List.exists (fun x -> x = keyid) subkeyfps)
+              List.exists ~f:(fun x -> x = keyid) subkeyfps)
 
       | 32 -> (* 256-bit v5/v6 fingerprint *)
           List.filter keys
           ~f:(fun key -> keyid = (Fingerprint.from_key key).Fingerprint.fp ||
               let (mainkeyfp,subkeyfps) = Fingerprint.fps_from_key key in
-              List.exists (fun x -> x = keyid) subkeyfps)
+              List.exists ~f:(fun x -> x = keyid) subkeyfps)
 
       | 16 -> (* 128-bit v3 fingerprint.  Not supported *)
           failwith "128-bit v3 fingerprints not implemented"
@@ -257,7 +257,7 @@ struct
           ("text/html; charset=UTF-8", -1, !last_stat_page)
       | Get ->
           plerror 4 "/pks/lookup: Get request (%s)"
-            (String.concat " " request.search);
+            (String.concat ~sep:" " request.search);
           let keys = lookup_keys request.search in
           let keys = clean_keys request keys in
           let count = List.length keys in
@@ -306,7 +306,7 @@ struct
 
       | Index | VIndex ->
           (* VIndex requests are treated indentically to index requests *)
-          plerror 4 "/pks/lookup: Index request: (%s)" (String.concat " " request.search);
+          plerror 4 "/pks/lookup: Index request: (%s)" (String.concat ~sep:" " request.search);
           try
             let keys = lookup_keys request.search in
             let count = List.length keys in

@@ -148,7 +148,7 @@ let reconcile_test () =
 
 let factorization_test () =
   let deg = rand_int 10 + 1 in
-  let terms = Array.to_list (Array.init deg (fun _ -> rand_poly 1)) in
+  let terms = Array.to_list (Array.init deg ~f:(fun _ -> rand_poly 1)) in
   let poly = List.fold_left ~init:Poly.one ~f:Poly.mult terms in
   let roots = Decode.factor poly in
   let orig_roots =

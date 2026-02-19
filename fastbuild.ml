@@ -171,7 +171,7 @@ struct
       eprintf "KeyDB directory already exists.  Exiting.\n";
       exit (-1)
     );
-    Unix.mkdir (Lazy.force Settings.dbdir) 0o700;
+    Unix.mkdir (Lazy.force Settings.dbdir) ~perm:0o700;
     Utils.initdbconf !Settings.basedir (Lazy.force Settings.dbdir);
 
     Keydb.open_dbs settings;

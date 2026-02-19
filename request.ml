@@ -67,7 +67,7 @@ let rec request_of_oplist ?(request=default_request) oplist =
           match hd with
             | ("options",options) ->
                 let options = Str.split comma_rxp options in
-                if List.mem "mr" options
+                if List.mem "mr" ~set:options
                 then { request with machine_readable = true }
                 else request
             | ("op","stats") -> {request with kind = Stats };

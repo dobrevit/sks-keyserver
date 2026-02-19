@@ -203,7 +203,7 @@ struct
         (* ignore offsets, they're handled elsewhere *)
         do_opt do_action (canonicalize_key key)
     in
-    Keydb.raw_iter clean;
+    Keydb.raw_iter ~f:clean;
     perror "Direct canonicalization complete"
 
   let canonicalize () =
@@ -334,7 +334,7 @@ struct
   let run applied_filters =
 
     (* only do canonicalize if it's necessary *)
-    if not (List.mem "yminsky.dedup" applied_filters) then (
+    if not (List.mem "yminsky.dedup" ~set:applied_filters) then (
       perror "Deduping keys in database";
       canonicalize ();
       Keydb.set_meta ~key:"filters" ~data:"yminsky.dedup";
@@ -343,8 +343,8 @@ struct
 
 
     (* note: if dedup was done, merge should be done again *)
-    if not (List.mem "yminsky.dedup" applied_filters)
-      || not (List.mem "yminsky.merge" applied_filters)
+    if not (List.mem "yminsky.dedup" ~set:applied_filters)
+      || not (List.mem "yminsky.merge" ~set:applied_filters)
     then (
       perror "Merging keys in database";
       merge ();

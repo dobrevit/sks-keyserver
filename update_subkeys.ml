@@ -124,7 +124,7 @@ let fix_keyids () =
       updates := []
     )
   in
-  Keydb.iter process_key;
+  Keydb.iter ~f:process_key;
   (* need one more call to apply_updates to add the final batch *)
   apply_updates !updates
 

@@ -126,7 +126,7 @@ let open_ptree_db settings =
 
         if not (Sys.file_exists settings.dbdir )
         then (
-          Unix.mkdir settings.dbdir 0o700;
+          Unix.mkdir settings.dbdir ~perm:0o700;
           Utils.initdbconf !Settings.basedir settings.dbdir;
           );
 

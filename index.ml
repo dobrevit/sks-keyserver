@@ -300,7 +300,7 @@ let siginfo_to_lines ~get_uid ?key_creation_time request self_keyid today siginf
     | None ->
         if Some self_keyid = siginfo.keyid then "[selfsig]"
         else
-          match apply_opt get_uid siginfo.keyid with
+          match apply_opt ~f:get_uid siginfo.keyid with
             | None | Some None -> "[]"
             | Some (Some uid) -> uid
   in
