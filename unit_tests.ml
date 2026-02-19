@@ -48,3 +48,11 @@ let run () =
   end;
   printf "Done\n%!";
 
+  printf "Running Modern key unit tests:%!";
+  begin
+    try Modern_key_test.run ()
+    with Unit_test_failure s ->
+      printf "\nUnit test failure: %s\n%!" s
+  end;
+  printf "Done\n%!";
+

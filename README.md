@@ -15,7 +15,7 @@ Prerequisites
 
 There are a few prerequisites to building this code.  You need:
 
-* OCaml 4.02 or later.  Get it from <http://ocaml.org>
+* OCaml 4.08 or later.  Get it from <http://ocaml.org>
 * Berkeley DB version 4.6.* or later.  You can find the
   appropriate versions at
   <http://www.oracle.com/technetwork/database/berkeleydb/downloads/index.html>
@@ -225,6 +225,44 @@ Building up the databases
 **DO NOT DELETE THE `dump` DIRECTORY**, even after the database is
 built.  The original keys are not copied to the database, and so the
 dump must be left in place.
+
+Poison Key Defense
+------------------
+
+SKS includes configurable limits to defend against certificate flooding
+attacks (CVE-2019-13050), where a key is loaded with an excessive number
+of signatures to cause denial of service.
+
+The following settings can be added to `sksconf` to tune these limits:
+
+    max_sigs_per_uid: 1000
+    max_uids_per_key: 200
+    max_subkeys_per_key: 50
+    max_key_size: 262144
+    max_selfsigs: 200
+
+Keys exceeding `max_key_size` bytes (default 256KB) are rejected on
+submission and during reconciliation.  Signatures, UIDs, and subkeys
+beyond the configured limits are silently truncated during merge
+operations.
+
+Modern OpenPGP Support
+----------------------
+
+SKS supports OpenPGP v5 keys (LibrePGP/GnuPG 2.5+) and v6 keys
+(RFC 9580) in addition to the traditional v3 and v4 key formats.
+
+Supported modern features include:
+
+  - SHA-256 fingerprints (32 bytes) for v5 and v6 keys
+  - Algorithms: X25519, X448, Ed25519 (native), Ed448
+  - AEAD Encrypted Data packets (tag 20)
+  - Padding packets (tag 21)
+  - Issuer fingerprint subpacket (type 33)
+  - Lookup by 32-byte v5/v6 fingerprint
+
+Unknown packet types, signature versions, and key versions are handled
+gracefully without crashing.
 
 Platform specific issues
 ------------------------

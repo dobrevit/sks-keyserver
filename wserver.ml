@@ -172,7 +172,7 @@ let get_all cin =
 let get_lines cin =
   Str.split eol (get_all cin)
 
-let max_post_length = 5 * 1024 * 1024  (* posts restricted to 5 Megs or less *)
+let max_post_length = 1 * 1024 * 1024  (* posts restricted to 1 Meg or less *)
 
 let parse_post headers cin =
   try

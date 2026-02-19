@@ -78,18 +78,18 @@ let stored_logfile_name = ref None
 (**************************************************************************)
 
 let plerror level format =
-  kprintf (fun s ->
-             if !Settings.debug && level  <= !Settings.debuglevel
-             then  (
-               let tm = Unix.localtime (Unix.time ()) in
-               fprintf !logfile "%04d-%02d-%02d %02d:%02d:%02d "
-                 (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1)
-                 tm.Unix.tm_mday (* date *)
-                 tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec; (* time *)
-               output_string !logfile s;
-               output_string !logfile "\n";
-               flush !logfile;
-             ) )
+  ksprintf (fun s ->
+              if !Settings.debug && level  <= !Settings.debuglevel
+              then  (
+                let tm = Unix.localtime (Unix.time ()) in
+                fprintf !logfile "%04d-%02d-%02d %02d:%02d:%02d "
+                  (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1)
+                  tm.Unix.tm_mday (* date *)
+                  tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec; (* time *)
+                output_string !logfile s;
+                output_string !logfile "\n";
+                flush !logfile;
+              ) )
     format
 
 (**************************************************************************)
@@ -115,19 +115,19 @@ let reopen_logfile () =
 let perror x = plerror 3 x
 
 let eplerror level e format =
-  kprintf (fun s ->
-             if !Settings.debug && level  <= !Settings.debuglevel
-             then  (
-               let tm = Unix.localtime (Unix.time ()) in
-               fprintf !logfile "%04d-%02d-%02d %02d:%02d:%02d "
-                 (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1)
-                 tm.Unix.tm_mday (* date *)
-                 tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec;
-               output_string !logfile s;
-               fprintf !logfile ": %s\n" (err_to_string e);
-               flush !logfile;
-             )
-          )
+  ksprintf (fun s ->
+              if !Settings.debug && level  <= !Settings.debuglevel
+              then  (
+                let tm = Unix.localtime (Unix.time ()) in
+                fprintf !logfile "%04d-%02d-%02d %02d:%02d:%02d "
+                  (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1)
+                  tm.Unix.tm_mday (* date *)
+                  tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec;
+                output_string !logfile s;
+                fprintf !logfile ": %s\n" (err_to_string e);
+                flush !logfile;
+              )
+           )
     format
 
 let eperror x = eplerror 3 x

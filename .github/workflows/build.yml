@@ -1,0 +1,43 @@
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ocaml-version: ['4.08', '4.14', '5.2']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdb5.3-dev
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-version }}
+
+      - name: Install OCaml dependencies
+        run: |
+          opam install -y cryptokit num ocamlfind
+
+      - name: Build
+        run: |
+          eval $(opam env)
+          make dep
+          make LIBDB=-ldb-5.3 all
+
+      - name: Test
+        run: |
+          eval $(opam env)
+          ./sks unit_test

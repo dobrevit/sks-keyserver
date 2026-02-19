@@ -124,6 +124,11 @@ val mailsync_file : string lazy_t
 val dumpdir : string lazy_t
 val msgdir : string lazy_t
 val failed_msgdir : string lazy_t
+val max_sigs_per_uid : int ref
+val max_uids_per_key : int ref
+val max_subkeys_per_key : int ref
+val max_key_size : int ref
+val max_selfsigs : int ref
 val parse_spec : (Arg.key * Arg.spec * Arg.doc) list
 val anon_options : string -> unit
 val usage_string : string

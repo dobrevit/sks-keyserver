@@ -28,6 +28,7 @@ open Packet
 module Map = PMap.Map
 
 exception Bad_key
+exception Key_too_large
 exception Standalone_revocation_certificate
 
 
@@ -131,9 +132,26 @@ let is_revocation_signature pack =
      result
     | _ -> false
 
+let key_serialized_size key =
+  (* +6 is a conservative upper bound for packet header overhead:
+     1 byte tag + up to 5 bytes for new-format length encoding.
+     This slightly overestimates but ensures we never undercount. *)
+  List.fold_left ~init:0 ~f:(fun acc pack ->
+    acc + String.length pack.packet_body + 6
+  ) key
+
+let check_key_size key =
+  let size = key_serialized_size key in
+  if size > !Settings.max_key_size then begin
+    plerror 3 "Rejecting key: serialized size %d exceeds limit %d"
+      size !Settings.max_key_size;
+    raise Key_too_large
+  end
+
 let canonicalize key =
   if is_revocation_signature (List.hd key)
     then raise Standalone_revocation_certificate;
+  check_key_size key;
   try KeyMerge.dedup_key key
   with KeyMerge.Unparseable_packet_sequence -> raise Bad_key
 

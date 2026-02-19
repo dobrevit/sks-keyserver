@@ -152,7 +152,11 @@ let oid_to_psize oid =
      | "\x2b\x81\x04\x00\x0a" -> 256         		(* secp256k1 *)
      | "\x2b\x06\x01\x04\x01\xda\x47\x0f\x01" -> 256	(* Ed25519 *)  
      | "\x2b\x06\x01\x04\x01\x97\x55\x01\x05\x01" -> 256 (* cv25519 *)
-     | _ -> failwith "Unknown OID"
+     | "\x2b\x65\x6e" -> 256     (* X25519, OID 1.3.101.110 *)
+     | "\x2b\x65\x6f" -> 448     (* X448, OID 1.3.101.111 *)
+     | "\x2b\x65\x70" -> 256     (* Ed25519, OID 1.3.101.112 *)
+     | "\x2b\x65\x71" -> 448     (* Ed448, OID 1.3.101.113 *)
+     | _ -> 0                     (* Unknown OID *)
    in
    psize
 
@@ -202,7 +206,35 @@ let parse_pubkey_info packet =
       let mpis = read_mpis cin in
       let mpi = List.hd mpis in
       (algorithm,mpi,Some expiration, -1)
-      | _ -> failwith (sprintf "Unexpected pubkey version: %d" version)
+      | 5 | 6 ->
+      let algorithm = cin#read_byte in
+      let _key_material_length = cin#read_int_size 4 in
+      let (tmpmpi, tmpsize) = match algorithm with
+        | 25 -> (* X25519: 32 bytes raw *)
+            let _ = cin#read_string 32 in
+            ({mpi_bits = 256; mpi_data = ""}, 256)
+        | 26 -> (* X448: 56 bytes raw *)
+            let _ = cin#read_string 56 in
+            ({mpi_bits = 448; mpi_data = ""}, 448)
+        | 27 -> (* Ed25519: 32 bytes raw *)
+            let _ = cin#read_string 32 in
+            ({mpi_bits = 256; mpi_data = ""}, 256)
+        | 28 -> (* Ed448: 57 bytes raw *)
+            let _ = cin#read_string 57 in
+            ({mpi_bits = 448; mpi_data = ""}, 448)
+        | 18 -> parse_ecdh_pubkey cin
+        | 19 | 22 -> ({mpi_bits = 0; mpi_data = ""}, parse_ecdsa_pubkey cin)
+        | _ -> (* RSA/DSA/other: MPI-encoded *)
+            (try
+               let mpis = read_mpis cin in
+               let mpi = List.hd mpis in
+               (mpi, -1)
+             with _ -> ({mpi_bits = 0; mpi_data = ""}, -1))
+      in
+      (algorithm, tmpmpi, None, tmpsize)
+      | _ ->
+      (* Unknown version: return zero-valued info instead of crashing *)
+      (0, {mpi_bits = 0; mpi_data = ""}, None, -1)
   in
   { pk_version = version;
     pk_ctime = creation_time;
@@ -310,7 +342,65 @@ let parse_signature packet =
               }
 
 
-    | _ -> failwith (sprintf "Unexpected signature version: %d" version)
+    | 5 ->
+        (* v5 signatures (LibrePGP): same structure as v4 with 2-byte
+           subpacket lengths. v5 keys typically produce v4 signatures,
+           but handle v5 version gracefully if encountered. *)
+        let sigtype = cin#read_byte in
+        let pk_alg = cin#read_byte in
+        let _hash_alg = cin#read_byte in
+
+        let hashed_subpacket_bytes = cin#read_int_size 2 in
+        let hashed_subpackets = read_subpackets cin hashed_subpacket_bytes in
+
+        let unhashed_subpacket_bytes = cin#read_int_size 2 in
+        let unhashed_subpackets = read_subpackets cin unhashed_subpacket_bytes in
+
+        let hash_value = cin#read_string 2 in
+        let mpis = read_mpis cin in
+        V4sig { v4s_sigtype = sigtype;
+                v4s_pk_alg = pk_alg;
+                v4s_hashed_subpackets = hashed_subpackets;
+                v4s_unhashed_subpackets = unhashed_subpackets;
+                v4s_hash_value = hash_value;
+                v4s_mpis = mpis;
+              }
+
+    | 6 ->
+        (* v6 signatures (RFC 9580): 4-byte subpacket length fields,
+           salt field between hash_value and signature MPIs *)
+        let sigtype = cin#read_byte in
+        let pk_alg = cin#read_byte in
+        let _hash_alg = cin#read_byte in
+
+        let hashed_subpacket_bytes = cin#read_int_size 4 in
+        let hashed_subpackets = read_subpackets cin hashed_subpacket_bytes in
+
+        let unhashed_subpacket_bytes = cin#read_int_size 4 in
+        let unhashed_subpackets = read_subpackets cin unhashed_subpacket_bytes in
+
+        let hash_value = cin#read_string 2 in
+        (* v6 has a salt field (length depends on hash algorithm) followed
+           by signature MPIs; we skip parsing these as they are not needed
+           for key indexing or display *)
+        let mpis = (try read_mpis cin with _ -> []) in
+        V4sig { v4s_sigtype = sigtype;
+                v4s_pk_alg = pk_alg;
+                v4s_hashed_subpackets = hashed_subpackets;
+                v4s_unhashed_subpackets = unhashed_subpackets;
+                v4s_hash_value = hash_value;
+                v4s_mpis = mpis;
+              }
+
+    | _ ->
+        (* Unknown signature version: return a minimal parseable structure *)
+        V4sig { v4s_sigtype = 0;
+                v4s_pk_alg = 0;
+                v4s_hashed_subpackets = [];
+                v4s_unhashed_subpackets = [];
+                v4s_hash_value = "\x00\x00";
+                v4s_mpis = [];
+              }
 
 
 let ssp_ctime_id = 2

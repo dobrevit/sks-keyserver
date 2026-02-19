@@ -25,6 +25,7 @@ run-test: [
   ["./sks" "unit_test"]
 ]
 depends: [
+  "ocaml" {>= "4.08"}
   "ocamlfind" {build}
   "base-unix"
   "base-bytes"
