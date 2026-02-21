@@ -91,13 +91,16 @@ let log_diffs log_fname hashes =
         ~finally:(fun () -> close_out file)
     end
 
-let update_recover_list results partner_http_addr  =
-  let hashes = hashconvert results in
+let add_hashes_to_recover_list hashes partner_http_addr =
   let bundles = size_split hashes hash_bundle_size in
   List.iter bundles ~f:(fun bundle ->
                           Queue.add (bundle,partner_http_addr)
                           recover_list);
   if not (Queue.is_empty recover_list) then disable_gossip ()
+
+let update_recover_list results partner_http_addr  =
+  let hashes = hashconvert results in
+  add_hashes_to_recover_list hashes partner_http_addr
 
 
 

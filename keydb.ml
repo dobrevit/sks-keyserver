@@ -114,6 +114,10 @@ sig
   val swap_keys : Packet.packet list -> Packet.packet list -> unit
   val get_meta : string -> string
   val set_meta : key:string -> data:string -> unit
+  val del_meta : string -> unit
+  val mark_no_modify : hash:string -> unit
+  val unmark_no_modify : hash:string -> unit
+  val is_no_modify : hash:string -> bool
   val replace : Packet.packet list list -> Packet.packet list -> unit
   val delete_key : ?hash:'a -> Packet.packet list -> unit
 end
@@ -1167,6 +1171,14 @@ struct
 
   (***********************************************************************)
 
+  let nomodify_prefix = "nomodify:"
+
+  let is_no_modify ~hash =
+    let dbs = get_dbs () in
+    try ignore (Db.get dbs.meta (nomodify_prefix ^ KeyHash.hexify hash) []);
+        true
+    with Not_found -> false
+
   let key_to_merge_updates key =
     let hash = KeyHash.hash key in
     try
@@ -1174,6 +1186,16 @@ struct
         let keyid = Fingerprint.keyid_from_key ~short:true key in
         let potential_merges = List.filter ~f:(fun x -> x <> key)
                                  (get_by_short_keyid keyid)
+        in
+        (* Skip merging with keys marked no-modify *)
+        let potential_merges = List.filter potential_merges
+          ~f:(fun existing ->
+                let eh = KeyHash.hash existing in
+                if is_no_modify ~hash:eh then (
+                  plerror 3 "Key %s is marked no-modify, skipping merge"
+                    (KeyHash.hexify eh);
+                  false
+                ) else true)
         in
         plerror 4 "%d potential merges found for keyid %s"
           (List.length potential_merges) (KeyHash.hexify keyid);
@@ -1349,6 +1371,27 @@ struct
       | e ->
           txn_abort txn;
           raise e
+
+  let del_meta key =
+    let dbs = get_dbs () in
+    let txn = txn_begin () in
+    try
+      Db.del dbs.meta ?txn key;
+      txn_commit txn
+    with
+      | Not_found -> txn_commit txn  (* key didn't exist, that's fine *)
+      | Bdb.DBError s as e ->
+          eplerror 0 e "Fatal database error";
+          raise Sys.Break
+      | e ->
+          txn_abort txn;
+          raise e
+
+  let mark_no_modify ~hash =
+    set_meta ~key:(nomodify_prefix ^ KeyHash.hexify hash) ~data:"1"
+
+  let unmark_no_modify ~hash =
+    del_meta (nomodify_prefix ^ KeyHash.hexify hash)
 
   (**********************************************************)
 

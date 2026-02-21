@@ -52,6 +52,11 @@ let compatible_version_tuple = (0,1,5)
 let version =
   let (maj_version,min_version,release) = version_tuple in
   sprintf "%d.%d.%d" maj_version min_version release
+(* Reconciliation protocol version, sent during recon handshake.
+   Must stay "1.1.6" for compatibility with Hockeypuck, which does
+   strict equality checking against its DefaultVersion. *)
+let recon_version = "1.1.6"
+let build_sha = "__BUILD_SHA__"
 
 let compatible_version_string =
         let (maj_version,min_version,release) = compatible_version_tuple in
@@ -61,7 +66,12 @@ let period_regexp = Str.regexp "[.]"
 
 let parse_version_string vstr =
   let ar = Array.of_list (Str.bounded_split period_regexp vstr 3) in
-  (int_of_string ar.(0), int_of_string ar.(1), int_of_string ar.(2))
+  let parse_int s =
+    try Scanf.sscanf s "%d" (fun x -> x)
+    with _ -> 0
+  in
+  (parse_int ar.(0), parse_int ar.(1),
+   if Array.length ar > 2 then parse_int ar.(2) else 0)
 
 let err_to_string err = match err with
     Unix.Unix_error (enum,fname,param) ->

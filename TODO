@@ -1,24 +1,12 @@
 --- Feature Requests ----
 
-+ Replace numerix with Big_int
 + Fix primary-UID detection
-+ Allow for time-based dump of keys
-+ Bind to specific IP address (low priority)
 
 --- Bug Reports ----
 
 + "sks db" seems to take too long to shut down.  Is it really checkpointing?
-+ From Bjoern Burger.  SKS appears to fail on multiprocessor systems.
-+ From Ryan Lackey.  Compile bug on FreeBSD
 
 --- Highest Priority ----
-
-+ Unify commands to reduce the number of executables generated
-
-+ Fix build (and verify that fastbuild is fixed) so that it doesn't barf out
-  entirely if a deeply bogus key is found in the stream.
-
-+ Fix partial
 
 + Allow for partial progress: if some elements are recovered, and then
   there's a timeout, add those elements in.
@@ -31,13 +19,11 @@
   and Eventloop.SigAlarm should be passed through (or handled specially) by
   every function that could be called in a callback.
 
-+ Add hash and fingerprint lines to verbose index, if selected
-
 + Change searches so that search strings are broken up into words using same
   word-breaking algorithm.  Optionally, you might want to check if actual
   string appears as a whole.  So typing "eva@kde.org" would pull up all keys
   with "eva", "kde" and "org", and the optional part would be to check that
-  some UID actually contains the st ring "eva@kde.org" in its entirety.
+  some UID actually contains the string "eva@kde.org" in its entirety.
 
 --- Lower Priority ----
 
@@ -65,12 +51,33 @@
 + enable limited retry-on-failure for gossip.  That way, a few bum nodes
   won't slow the system down.
 
------------Not Going To Do (probably) --------------------
-
-+ implement no-modify tag (turns out this requires cryptography, which I
-  would like to avoid for now, at least.)
-
 -----------DONE--------------------
+
++ implement no-modify tag.
+  (Done in 1.3.0: sks mark_no_modify / unmark_no_modify commands.
+   Protected keys are excluded from merge in key_to_merge_updates.)
+
++ Replace numerix with Big_int
+  (Done in 1.1.0: OCaml's Big_int implementation used instead.)
+
++ Allow for time-based dump of keys
+  (Done: incdump.ml implements sks incdump <timestamp>.)
+
++ Bind to specific IP address
+  (Done: -recon_address and -hkp_address settings.)
+
++ Unify commands to reduce the number of executables generated
+  (Done in 1.0.5: single "sks" executable with subcommands.)
+
++ Fix build (and verify that fastbuild is fixed) so that it doesn't barf out
+  entirely if a deeply bogus key is found in the stream.
+  (Done: build.ml catches Bad_key, Key_too_large, Standalone_revocation_certificate.)
+
++ Fix partial
+  (Done: checkpoint logic allows recovery.)
+
++ Add hash and fingerprint lines to verbose index, if selected
+  (Done: index.ml get_extra_lines with fingerprint and hash display.)
 
 + Modify eventloop to ensure fairness of sockets versus other events.
 

@@ -51,7 +51,7 @@ else
 WARNERR=-warn-error A
 endif
 
-CAMLINCLUDE= -package cryptokit,unix,str,num -I bdb
+CAMLINCLUDE= -package cryptokit,unix,str,num,zarith,digestif.c,mirage-crypto-ec,mirage-crypto-pk,lru -I bdb
 COMMONCAMLFLAGS=$(CAMLINCLUDE) $(OCAMLLIB) $(CAMLLDFLAGS) -ccopt -Lbdb -annot -bin-annot $(WARNERR)
 OCAMLDEP=ocamldep
 CAMLLIBS=bdb.cma
@@ -85,16 +85,17 @@ ROBJS.bc= settings.cmo pstyle.cmo getfileopts.cmo \
 ROBJS=$(ROBJS.bc:.cmo=.cmx)
 
 OBJS.bc=packet.cmo parsePGP.cmo sStream.cmo bdbwrap.cmo \
-	key.cmo keyHash.cmo keyMerge.cmo fixkey.cmo \
-	fingerprint.cmo keydb.cmo armor.cmo \
+	key.cmo keyHash.cmo keyMerge.cmo fingerprint.cmo sigVerify.cmo fixkey.cmo \
+	keydb.cmo armor.cmo \
 	dbMessages.cmo htmlTemplates.cmo wserver.cmo \
 	membership.cmo tester.cmo request.cmo \
 	stats.cmo index.cmo mRindex.cmo pTreeDB.cmo \
 	sendmail.cmo recvmail.cmo mailsync.cmo \
+	parallel.cmo \
 	clean_keydb.cmo build.cmo fastbuild.cmo pbuild.cmo merge_keyfiles.cmo \
 	sksdump.cmo incdump.cmo dbserver.cmo reconComm.cmo recoverList.cmo \
 	catchup.cmo reconserver.cmo update_subkeys.cmo sks_do.cmo \
-	modern_key_test.cmo unit_tests.cmo
+	modern_key_test.cmo recon_compat_test.cmo unit_tests.cmo
 
 OBJS=$(OBJS.bc:.cmo=.cmx)
 
@@ -115,28 +116,35 @@ LIBS=$(LIBS.bc:.cma=.cmxa)
 VERSION := $(shell cat VERSION)
 VERSIONPREFIX = sks-$(VERSION)
 COMMA_VERSION := $(shell cat VERSION | sed y/./,/)
+BUILD_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 FILES := $(shell sed s/.*/$(VERSIONPREFIX)\\/\&/ FILES)
 
 # Special case make rules for functions which require preprocessor directives
 
 common.cmx: common.ml VERSION
 	$(OCAMLOPT) $(OCAMLOPTFLAGS) \
-	-pp "sed s/__VERSION__/$(COMMA_VERSION)/" -c $<
+	-pp "sed -e s/__VERSION__/$(COMMA_VERSION)/ -e s/__BUILD_SHA__/$(BUILD_SHA)/" -c $<
 
 common.cmo: common.ml VERSION
-	$(OCAMLC) $(OCAMLFLAGS) -pp "sed s/__VERSION__/$(COMMA_VERSION)/" -c $<
+	$(OCAMLC) $(OCAMLFLAGS) -pp "sed -e s/__VERSION__/$(COMMA_VERSION)/ -e s/__BUILD_SHA__/$(BUILD_SHA)/" -c $<
 
 # Special targets
 
 install:
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	install sks_build.sh sks sks_add_mail $(DESTDIR)$(PREFIX)/bin
+	sed 's|__BINDIR__|$(PREFIX)/bin|g' sks_build.sh > sks_build.sh.tmp
+	install sks_build.sh.tmp $(DESTDIR)$(PREFIX)/bin/sks_build.sh
+	rm -f sks_build.sh.tmp
+	install sks sks_add_mail $(DESTDIR)$(PREFIX)/bin
 	mkdir -p $(DESTDIR)$(MANDIR)/man8
 	install sks.8.gz $(DESTDIR)$(MANDIR)/man8
 
 install.bc:
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	install sks_build.bc.sh sks.bc sks_add_mail.bc $(DESTDIR)$(PREFIX)/bin
+	sed 's|__BINDIR__|$(PREFIX)/bin|g' sks_build.bc.sh > sks_build.bc.sh.tmp
+	install sks_build.bc.sh.tmp $(DESTDIR)$(PREFIX)/bin/sks_build.bc.sh
+	rm -f sks_build.bc.sh.tmp
+	install sks.bc sks_add_mail.bc $(DESTDIR)$(PREFIX)/bin
 	mkdir -p $(DESTDIR)$(MANDIR)/man8
 	install sks.8.gz $(DESTDIR)$(MANDIR)/man8
 

@@ -132,7 +132,7 @@ struct
   let get_stats () =
     let today = Stats.round_up_to_day (Unix.gettimeofday ()) in
     let log =
-      let maxsize = 90000 in
+      let maxsize = 1_000_000 in
       let last_month = today -. (31. *. 24. *. 60. *. 60.) in
       Keydb.reverse_logquery ~maxsize last_month
     in
@@ -513,7 +513,8 @@ struct
                           Keydb.add_key_merge ~newkey:true key;
                           incr ctr;
                         with
-                          | Fixkey.Bad_key | KeyMerge.Unparseable_packet_sequence ->
+                          | Fixkey.Bad_key | Fixkey.Bad_key_at _
+                          | KeyMerge.Unparseable_packet_sequence ->
                               cout#write_string
                               ("Add failed: Malformed Key --- unexpected packet " ^
                                "type and/or order of packets<br>");
@@ -558,6 +559,14 @@ struct
                 in
                 let keystrings = get_keystrings_from_hashes hashes in
                 perror "%d keys found" (List.length keystrings);
+                if !Settings.debuglevel >= 4 then
+                  List.iter keystrings ~f:(fun ks ->
+                    try
+                      let key = Key.of_string ks in
+                      let fp = Utils.hexstring (Fingerprint.fp_from_key key) in
+                      let hash = KeyHash.hexify (KeyHash.hash key) in
+                      plerror 4 "  hashquery serving fp=%s hash=%s" fp hash
+                    with _ -> ());
                 CMarshal.marshal_list ~f:CMarshal.marshal_string cout
                   keystrings;
                 ("pgp/keys" (* This is a bogus content-type *),
@@ -580,12 +589,9 @@ struct
        []
     )
 
-  let get_filters =
-    Utils.unit_memoize
-      (fun () ->
-         try Str.split comma_rxp (Keydb.get_meta "filters")
-         with Not_found -> []
-      )
+  let get_filters () =
+    try Str.split comma_rxp (Keydb.get_meta "filters")
+    with Not_found -> []
 
 
   (** Handler for commands coming off of the db_command_addr *)
@@ -604,16 +610,97 @@ struct
           marshal cout (Keys keys)
 
       | Keys keys ->
+          let n_changed = ref 0 and n_same = ref 0 and n_dropped = ref 0 in
+          let drop_reasons = Hashtbl.create 8 in
+          let pkt_removed = Hashtbl.create 8 in
+          let changed_key_algos = Hashtbl.create 8 in
+          let total_pkts_removed = ref 0 in
+          let bump tbl ~key =
+            let n = try Hashtbl.find tbl key with Not_found -> 0 in
+            Hashtbl.replace tbl ~key ~data:(n + 1) in
+          let bump_by tbl ~key ~n:count =
+            let cur = try Hashtbl.find tbl key with Not_found -> 0 in
+            Hashtbl.replace tbl ~key ~data:(cur + count) in
           let keys = List.fold_left ~init:[] keys
                        ~f:(fun list key ->
-                             try (Fixkey.canonicalize key)::list
+                             let raw_hash = KeyHash.hash key in
+                             try
+                               let ckey = Fixkey.canonicalize key in
+                               let canon_hash = KeyHash.hash ckey in
+                               if raw_hash <> canon_hash then (
+                                 incr n_changed;
+                                 (* Log fingerprint for divergent keys *)
+                                 (try
+                                   let fp = Utils.hexstring
+                                     (Fingerprint.fp_from_key key) in
+                                   plerror 3
+                                     "  hash-changed fp=%s raw=%s canon=%s (%d->%d pkts)"
+                                     fp (KeyHash.hexify raw_hash)
+                                     (KeyHash.hexify canon_hash)
+                                     (List.length key) (List.length ckey)
+                                 with _ -> ());
+                                 (* Track primary key algorithm *)
+                                 (try
+                                   let pk = List.hd key in
+                                   let v = int_of_char pk.Packet.packet_body.[0] in
+                                   let algo_off = if v >= 4 then 5 else 7 in
+                                   let algo = int_of_char pk.Packet.packet_body.[algo_off] in
+                                   bump changed_key_algos ~key:(Printf.sprintf "algo%d" algo)
+                                 with _ -> bump changed_key_algos ~key:"unknown");
+                                 (* Count removed packets by type *)
+                                 let count_types pkts =
+                                   let tbl = Hashtbl.create 8 in
+                                   List.iter pkts ~f:(fun p ->
+                                     bump tbl ~key:(Packet.ptype_to_string
+                                                      p.Packet.packet_type));
+                                   tbl in
+                                 let raw_counts = count_types key in
+                                 let canon_counts = count_types ckey in
+                                 Hashtbl.iter raw_counts
+                                   ~f:(fun ~key:ptype ~data:raw_n ->
+                                     let canon_n = try Hashtbl.find canon_counts ptype
+                                                   with Not_found -> 0 in
+                                     let removed = raw_n - canon_n in
+                                     if removed > 0 then begin
+                                       bump_by pkt_removed ~key:ptype ~n:removed;
+                                       total_pkts_removed :=
+                                         !total_pkts_removed + removed
+                                     end)
+                               ) else
+                                 incr n_same;
+                               ckey::list
                              with
-                             | KeyMerge.Unparseable_packet_sequence | Fixkey.Bad_key -> list
+                             | KeyMerge.Unparseable_packet_sequence ->
+                                 bump drop_reasons ~key:"unparseable";
+                                 incr n_dropped; list
+                             | Fixkey.Bad_key ->
+                                 bump drop_reasons ~key:"bad_key";
+                                 incr n_dropped; list
+                             | Fixkey.Bad_key_at stage ->
+                                 bump drop_reasons ~key:stage;
+                                 incr n_dropped; list
                              | Fixkey.Key_too_large ->
-                                 plerror 2 "Skipping oversized key from recon";
-                                 list
+                                 bump drop_reasons ~key:"too_large";
+                                 incr n_dropped; list
                           )
           in
+          if !n_changed > 0 || !n_dropped > 0 then begin
+            plerror 3 "Recon batch: %d unchanged, %d hash-changed, %d dropped"
+              !n_same !n_changed !n_dropped;
+            Hashtbl.iter drop_reasons
+              ~f:(fun ~key:reason ~data:n ->
+                    plerror 3 "  drop reason: %s = %d" reason n);
+            if !total_pkts_removed > 0 then begin
+              plerror 3 "  hash-changed: %d packets removed total"
+                !total_pkts_removed;
+              Hashtbl.iter pkt_removed
+                ~f:(fun ~key:ptype ~data:n ->
+                      plerror 3 "    removed: %s = %d" ptype n);
+              Hashtbl.iter changed_key_algos
+                ~f:(fun ~key:algo ~data:n ->
+                      plerror 3 "    key-algo: %s = %d" algo n)
+            end
+          end;
           marshal cout (Ack 0);
           (try Keydb.add_keys_merge keys
            with e -> eplerror 2 e "Key addition failed")

@@ -102,9 +102,12 @@ struct
     set_logfile "pbuild";
         perror "Running SKS %s%s" Common.version Common.version_suffix;
 
-    if Sys.file_exists (Lazy.force Settings.ptree_dbdir) then (
-      printf "PTree directory already exists.  Exiting.\n";
-      exit (-1)
+    let ptree_dbdir = Lazy.force Settings.ptree_dbdir in
+    if Sys.file_exists ptree_dbdir then (
+      if Utils.dir_has_db_files ptree_dbdir then (
+        printf "PTree directory already contains database files.  Exiting.\n";
+        exit (-1)
+      )
     );
 
     PTreeDB.init_db ptree_settings;

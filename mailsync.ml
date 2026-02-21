@@ -98,7 +98,7 @@ let rec load_mailed_keys ~addkey () =
                       addkey key
                     with
                         Bdb.Key_exists -> ()
-                      | Fixkey.Bad_key ->
+                      | Fixkey.Bad_key | Fixkey.Bad_key_at _ ->
                           plerror 2 "Fixkey.canonicalize couldn't parse key %s"
                             (KeyHash.hexify (KeyHash.hash origkey))
                  )

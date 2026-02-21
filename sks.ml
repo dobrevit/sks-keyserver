@@ -133,6 +133,98 @@ let rec commands = [
     desc = "Runs basic unit tests and reporst results";
     func = Unit_tests.run;
   };
+  { name = "set_filters";
+    usage = "filter1,filter2,...";
+    desc = "Update the filters metadata in the key database without rebuilding";
+    func = (fun () ->
+              match !Settings.anonlist with
+              | [filters_str] ->
+                  let settings = {
+                    Keydb.withtxn = true;
+                    Keydb.cache_bytes = !Settings.cache_bytes;
+                    Keydb.pagesize = !Settings.pagesize;
+                    Keydb.keyid_pagesize = !Settings.keyid_pagesize;
+                    Keydb.meta_pagesize = !Settings.meta_pagesize;
+                    Keydb.subkeyid_pagesize = !Settings.subkeyid_pagesize;
+                    Keydb.time_pagesize = !Settings.time_pagesize;
+                    Keydb.tqueue_pagesize = !Settings.tqueue_pagesize;
+                    Keydb.word_pagesize = !Settings.word_pagesize;
+                    Keydb.dbdir = Lazy.force Settings.dbdir;
+                    Keydb.dumpdir = Lazy.force Settings.dumpdir;
+                  } in
+                  let module KDB = Keydb.Safe in
+                  KDB.open_dbs settings;
+                  protect ~f:(fun () ->
+                    KDB.set_meta ~key:"filters" ~data:filters_str;
+                    printf "Filters set to: %s\n" filters_str)
+                  ~finally:(fun () -> KDB.close_dbs ())
+              | _ ->
+                  eprintf "Usage: sks set_filters filter1,filter2,...\n";
+                  exit (-1)
+           )
+  };
+  { name = "mark_no_modify";
+    usage = "<hash_hex>";
+    desc = "Mark a key as no-modify (prevents merging/updating via recon or HKP)";
+    func = (fun () ->
+              match !Settings.anonlist with
+              | [hash_hex] ->
+                  let settings = {
+                    Keydb.withtxn = true;
+                    Keydb.cache_bytes = !Settings.cache_bytes;
+                    Keydb.pagesize = !Settings.pagesize;
+                    Keydb.keyid_pagesize = !Settings.keyid_pagesize;
+                    Keydb.meta_pagesize = !Settings.meta_pagesize;
+                    Keydb.subkeyid_pagesize = !Settings.subkeyid_pagesize;
+                    Keydb.time_pagesize = !Settings.time_pagesize;
+                    Keydb.tqueue_pagesize = !Settings.tqueue_pagesize;
+                    Keydb.word_pagesize = !Settings.word_pagesize;
+                    Keydb.dbdir = Lazy.force Settings.dbdir;
+                    Keydb.dumpdir = Lazy.force Settings.dumpdir;
+                  } in
+                  let module KDB = Keydb.Safe in
+                  KDB.open_dbs settings;
+                  protect ~f:(fun () ->
+                    let hash = KeyHash.dehexify hash_hex in
+                    KDB.mark_no_modify ~hash;
+                    printf "Key %s marked as no-modify\n" hash_hex)
+                  ~finally:(fun () -> KDB.close_dbs ())
+              | _ ->
+                  eprintf "Usage: sks mark_no_modify <hash_hex>\n";
+                  exit (-1)
+           )
+  };
+  { name = "unmark_no_modify";
+    usage = "<hash_hex>";
+    desc = "Remove no-modify mark from a key (allows merging/updating again)";
+    func = (fun () ->
+              match !Settings.anonlist with
+              | [hash_hex] ->
+                  let settings = {
+                    Keydb.withtxn = true;
+                    Keydb.cache_bytes = !Settings.cache_bytes;
+                    Keydb.pagesize = !Settings.pagesize;
+                    Keydb.keyid_pagesize = !Settings.keyid_pagesize;
+                    Keydb.meta_pagesize = !Settings.meta_pagesize;
+                    Keydb.subkeyid_pagesize = !Settings.subkeyid_pagesize;
+                    Keydb.time_pagesize = !Settings.time_pagesize;
+                    Keydb.tqueue_pagesize = !Settings.tqueue_pagesize;
+                    Keydb.word_pagesize = !Settings.word_pagesize;
+                    Keydb.dbdir = Lazy.force Settings.dbdir;
+                    Keydb.dumpdir = Lazy.force Settings.dumpdir;
+                  } in
+                  let module KDB = Keydb.Safe in
+                  KDB.open_dbs settings;
+                  protect ~f:(fun () ->
+                    let hash = KeyHash.dehexify hash_hex in
+                    KDB.unmark_no_modify ~hash;
+                    printf "Key %s no-modify mark removed\n" hash_hex)
+                  ~finally:(fun () -> KDB.close_dbs ())
+              | _ ->
+                  eprintf "Usage: sks unmark_no_modify <hash_hex>\n";
+                  exit (-1)
+           )
+  };
   { name = "help";
     usage = "";
     desc = "Prints this message";

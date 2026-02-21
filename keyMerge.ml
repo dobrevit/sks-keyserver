@@ -233,7 +233,7 @@ let merge_sigpairs pairs =
               Map.add ~key:pack ~data:(Utils.dedup (old_sigs @ sigs)) map
             with
                 (* otherwise, add in data by itself *)
-                Not_found -> Map.add ~key:pack ~data:sigs map)
+                Not_found -> Map.add ~key:pack ~data:(Utils.dedup sigs) map)
       ~init:Map.empty
   in
   Map.fold ~f:(fun ~key:pack ~data:sigs list -> (pack,sigs)::list) map ~init:[]
@@ -286,7 +286,7 @@ let dedup_sigpairs pairs =
               let old_sigs = Map.find pack map in
               Map.add ~key:pack ~data:(Utils.dedup (sigs @ old_sigs)) map
             with
-                Not_found -> Map.add ~key:pack ~data:sigs map
+                Not_found -> Map.add ~key:pack ~data:(Utils.dedup sigs) map
          )
   in
   Map.to_alist map
@@ -301,6 +301,8 @@ let dedup_pkey pkey =
     }
 
 let dedup_key key = flatten (dedup_pkey (key_to_pkey key))
+
+let dedup_key_from_pkey pkey = flatten (dedup_pkey pkey)
 
 let parseable key =
   try ignore (key_to_pkey key); true

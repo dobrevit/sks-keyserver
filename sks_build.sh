@@ -5,6 +5,8 @@
 # You might want to edit this file to reduce or increase memory usage
 # depending on your system
 
+SKS=__BINDIR__/sks
+
 trap ignore_signal USR1 USR2
 
 ignore_signal() {
@@ -29,10 +31,13 @@ ask_mode() {
     read
     case "$REPLY" in
      1)
-        mode="fastbuild"
+        # fastbuild: -n 10 means 10 * 15000 = 150K keys per batch
+        mode="fastbuild -n 10"
      ;;
      2)
-        mode="build /var/lib/sks/dump/*.pgp"
+        # normalbuild: -n 100000 processes 100K keys per batch.
+        # Reduce for memory-constrained systems (e.g. -n 10000 for 1GB RAM)
+        mode="build /var/lib/sks/dump/*.pgp -n 100000"
      ;;
      *)
         echo "Option unknown. bye!"
@@ -46,9 +51,9 @@ fail() { echo Command failed unexpectedly.  Bailing out; exit -1; }
 ask_mode
 
 echo "=== Running (fast)build... ==="
-if ! /usr/sbin/sks $mode -n 10 -cache 100; then fail; fi
+if ! $SKS $mode -cache 100; then fail; fi
 echo === Cleaning key database... ===
-if ! /usr/sbin/sks cleandb; then fail; fi
+if ! $SKS cleandb; then fail; fi
 echo === Building ptree database... ===
-if ! /usr/sbin/sks pbuild -cache 20 -ptree_cache 70; then fail; fi
+if ! $SKS pbuild -cache 20 -ptree_cache 70; then fail; fi
 echo === Done! ===

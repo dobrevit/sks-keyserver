@@ -28,23 +28,29 @@ open Packet
 module Map = PMap.Map
 
 exception Bad_key
+exception Bad_key_at of string
 exception Key_too_large
 exception Standalone_revocation_certificate
 
 
-(** list of filters currently applied on incoming keys.  Filter types are
-  included in comma-separated list, and should not include commas or
-  whitespace
-
-  meaning of filter types:
-
-  - yminsky.merge:
-      Merges all keys in database that can be merged.
-  - yminsky.dedup:
-      Parses all keys and removes duplicates.  Unparseable keys
-      are removed from the database.
+(** Filter lists for each mode.  Filter names are advertised during
+    reconciliation config exchange and must match exactly.
+    - hockeypuck: full Hockeypuck sksDefaultFilters (hkp/sks/recon.go)
+    - legacy: original SKS filters (yminsky.dedup + yminsky.merge)
 *)
-let filters = [ "yminsky.dedup"; "yminsky.merge" ]
+let legacy_filters = ["yminsky.dedup"; "yminsky.merge"]
+
+let hockeypuck_filters = [
+  "drop:UAT"; "drop:hardRevokedCruft"; "drop:implausible";
+  "drop:invalidSelfSig"; "drop:structuralMartian"; "drop:unbound";
+  "drop:unparseable"; "schema:application/pgp-keys"; "versions:34";
+  "yminsky.dedup"; "yminsky.merge"
+]
+
+let filters () =
+  match !Settings.filter_mode with
+  | "legacy" -> legacy_filters
+  | _ -> hockeypuck_filters
 
 (**********************************************************************)
 (***  Key Merging  ****************************************************)
@@ -148,23 +154,269 @@ let check_key_size key =
     raise Key_too_large
   end
 
-let canonicalize key =
-  if is_revocation_signature (List.hd key)
-    then raise Standalone_revocation_certificate;
-  check_key_size key;
-  try KeyMerge.dedup_key key
-  with KeyMerge.Unparseable_packet_sequence -> raise Bad_key
-
-
 open KeyMerge
 
 let good_key pack =
   try ignore (ParsePGP.parse_pubkey_info pack); true
-  with e -> false
+  with _ -> false
 
 let good_signature pack =
   try ignore (ParsePGP.parse_signature pack); true
-  with e -> false
+  with _ -> false
+
+(**********************************************************************)
+(***  Hockeypuck-compatible filters  **********************************)
+(**********************************************************************)
+
+(** drop:structuralMartian — keep only valid key material packet types.
+    Hockeypuck only handles tags 6,14,13,2 during parsing (io.go:Parse).
+    We also keep tag 17 (UAT) here; it's removed later by drop_uat. *)
+let pre_filter packets =
+  List.filter packets ~f:(fun p ->
+    match p.packet_type with
+    | Public_Key_Packet | Public_Subkey_Packet
+    | User_ID_Packet | User_Attribute_Packet
+    | Signature_Packet -> true
+    | _ -> false)
+
+(** drop:UAT — remove User Attribute packets (tag 17) and their sigs.
+    Hockeypuck silently ignores tag 17 during parsing. *)
+let drop_uat pkey =
+  { pkey with uids = List.filter pkey.uids
+      ~f:(fun (uid, _) -> uid.packet_type <> User_Attribute_Packet) }
+
+(** drop:unparseable — remove signatures and subkeys that fail to parse.
+    Hockeypuck drops packets that fail Parse (io.go:180-215). *)
+let drop_unparseable pkey =
+  let filter_sigs sigs = List.filter sigs ~f:good_signature in
+  { pkey with
+    selfsigs = filter_sigs pkey.selfsigs;
+    uids = Utils.filter_map pkey.uids ~f:(fun (uid, sigs) ->
+      let sigs = filter_sigs sigs in
+      if sigs = [] then None else Some (uid, sigs));
+    subkeys = Utils.filter_map pkey.subkeys ~f:(fun (sk, sigs) ->
+      if not (good_key sk) then None
+      else let sigs = filter_sigs sigs in
+           if sigs = [] then None else Some (sk, sigs));
+  }
+
+(** Check if any signature in the list has an issuer keyid matching
+    the primary key.  This is the same check Hockeypuck uses to
+    distinguish self-sigs from third-party sigs (userid.go:133). *)
+let has_selfsig primary_keyid sigs =
+  List.exists sigs ~f:(fun sig_pkt ->
+    try
+      let parsed = ParsePGP.parse_signature sig_pkt in
+      (match ParsePGP.sig_issuer_keyid parsed with
+       | Some issuer -> issuer = primary_keyid
+       | None -> false)
+    with _ -> false)
+
+(** Third-party sig types that Hockeypuck keeps per component.
+    Hockeypuck's SigInfo() on each component filters by type AFTER
+    plausibility-checking third-party sigs:
+    - Primary key: KeyRevocation (0x20), DirectSignature (0x1F)
+      (pubkey.go:308-311)
+    - UID: GenericCert..PositiveCert (0x10-0x13),
+      CertificationRevocation (0x30)  (userid.go:140-143)
+    - Subkey: SubkeyRevocation (0x28) only  (subkey.go:103-107)
+*)
+let allowed_3p_direct_sigtypes = [0x1F; 0x20]
+let allowed_3p_uid_sigtypes = [0x10; 0x11; 0x12; 0x13; 0x30]
+let allowed_3p_subkey_sigtypes = [0x28]
+
+(** drop:implausible — remove third-party sigs that fail the 2-byte
+    hash-tag check OR have a sig type that Hockeypuck would discard.
+    This recomputes the hash over RFC 4880 signed data and compares
+    the first 2 bytes against the signature's hash_value field.
+    Self-sigs are left for drop:invalidSelfSig.
+    See Hockeypuck verify.go hash-tag functions, SigInfo() in
+    pubkey.go, userid.go, subkey.go. *)
+let drop_implausible pkey =
+  let primary_keyid = Fingerprint.keyid_from_key ~short:false [pkey.key] in
+  let is_selfsig sig_pkt =
+    try match ParsePGP.sig_issuer_keyid
+              (ParsePGP.parse_signature sig_pkt) with
+        | Some issuer -> issuer = primary_keyid
+        | None -> false
+    with _ -> false
+  in
+  let filter_sigs target allowed_3p_types sigs =
+    List.filter sigs ~f:(fun sig_pkt ->
+      if is_selfsig sig_pkt then true  (* leave for invalidSelfSig *)
+      else
+        (* Third-party: hash-tag check AND sig-type filter *)
+        SigVerify.check_hash_tag ~primary_key:pkey.key ~target ~sig_pkt
+        && (try
+              let parsed = ParsePGP.parse_signature sig_pkt in
+              let sigtype = match parsed with
+                | V3sig s -> s.v3s_sigtype | V4sig s -> s.v4s_sigtype in
+              List.mem sigtype ~set:allowed_3p_types
+            with _ -> false))
+  in
+  { pkey with
+    selfsigs = filter_sigs SigVerify.Direct_key
+                 allowed_3p_direct_sigtypes pkey.selfsigs;
+    uids = List.map pkey.uids ~f:(fun (uid, sigs) ->
+      (uid, filter_sigs (SigVerify.Uid_target uid)
+              allowed_3p_uid_sigtypes sigs));
+    subkeys = List.map pkey.subkeys ~f:(fun (sk, sigs) ->
+      (sk, filter_sigs (SigVerify.Subkey_target sk)
+              allowed_3p_subkey_sigtypes sigs));
+  }
+
+(** drop:invalidSelfSig — remove self-sigs that fail full cryptographic
+    verification.  If a UID/subkey loses all self-sigs, it is dropped.
+    If the entire key has no valid self-sigs, raise Bad_key.
+    See Hockeypuck resolve.go:37-142. *)
+let drop_invalid_selfsig pkey =
+  let primary_keyid = Fingerprint.keyid_from_key ~short:false [pkey.key] in
+  let is_selfsig sig_pkt =
+    try match ParsePGP.sig_issuer_keyid
+              (ParsePGP.parse_signature sig_pkt) with
+        | Some issuer -> issuer = primary_keyid
+        | None -> false
+    with _ -> false
+  in
+  (* Track self-sig failures by algo for diagnostics *)
+  let failed_algos = Hashtbl.create 8 in
+  let total_selfsigs = ref 0 in
+  let filter_sigs target sigs =
+    List.filter sigs ~f:(fun sig_pkt ->
+      if not (is_selfsig sig_pkt) then true  (* third-party — keep *)
+      else begin
+        incr total_selfsigs;
+        let result =
+          SigVerify.verify_signature ~primary_key:pkey.key ~target ~sig_pkt in
+        if not result then begin
+          let algo = try
+            let parsed = ParsePGP.parse_signature sig_pkt in
+            match parsed with
+            | V3sig s -> s.v3s_pk_alg | V4sig s -> s.v4s_pk_alg
+          with _ -> -1 in
+          let n = try Hashtbl.find failed_algos algo with Not_found -> 0 in
+          Hashtbl.replace failed_algos ~key:algo ~data:(n + 1)
+        end;
+        result
+      end)
+  in
+  let selfsigs = filter_sigs SigVerify.Direct_key pkey.selfsigs in
+  let uids = Utils.filter_map pkey.uids ~f:(fun (uid, sigs) ->
+    let sigs = filter_sigs (SigVerify.Uid_target uid) sigs in
+    if has_selfsig primary_keyid sigs then Some (uid, sigs) else None) in
+  let subkeys = Utils.filter_map pkey.subkeys ~f:(fun (sk, sigs) ->
+    let sigs = filter_sigs (SigVerify.Subkey_target sk) sigs in
+    if has_selfsig primary_keyid sigs then Some (sk, sigs) else None) in
+  if uids = [] && subkeys = []
+     && not (has_selfsig primary_keyid selfsigs)
+  then begin
+    (* Key is about to be dropped — log self-sig failure breakdown *)
+    let key_algo = try int_of_char pkey.key.packet_body.[0 + (
+      (* v4+: algo at offset 5; v2/v3: algo at offset 7 *)
+      let version = int_of_char pkey.key.packet_body.[0] in
+      if version >= 4 then 5 else 7)]
+    with _ -> -1 in
+    let buf = Buffer.create 64 in
+    Buffer.add_string buf (Printf.sprintf
+      "Dropping key (algo=%d, %d self-sigs failed): " key_algo !total_selfsigs);
+    Hashtbl.iter failed_algos ~f:(fun ~key:algo ~data:n ->
+      Buffer.add_string buf (Printf.sprintf "algo%d=%d " algo n));
+    plerror 3 "%s" (Buffer.contents buf);
+    raise Bad_key
+  end;
+  { pkey with selfsigs; uids; subkeys }
+
+(** drop:unbound — remove UIDs and subkeys that have no self-certification.
+    Hockeypuck drops these in resolve.go:79-134 after crypto verification.
+    We check issuer keyid match (structural check after crypto filtering). *)
+let drop_unbound pkey =
+  let primary_keyid = Fingerprint.keyid_from_key ~short:false [pkey.key] in
+  let uids = List.filter pkey.uids
+    ~f:(fun (_uid, sigs) -> has_selfsig primary_keyid sigs) in
+  let subkeys = List.filter pkey.subkeys
+    ~f:(fun (_sk, sigs) -> has_selfsig primary_keyid sigs) in
+  if uids = [] && subkeys = []
+     && not (has_selfsig primary_keyid pkey.selfsigs)
+  then raise Bad_key;
+  { pkey with uids; subkeys }
+
+(** Check if key has a hard revocation (reason nil, 0=NoReason, or
+    2=KeyCompromised).  See resolve.go:45-61 and RFC 4880 sec 5.2.3.23 *)
+let has_hard_revocation primary_keyid selfsigs =
+  List.exists selfsigs ~f:(fun sig_pkt ->
+    try
+      let parsed = ParsePGP.parse_signature sig_pkt in
+      let sigtype = match parsed with
+        | V3sig s -> s.v3s_sigtype | V4sig s -> s.v4s_sigtype in
+      if int_to_sigtype sigtype <> Key_revocation_signature then false
+      else match ParsePGP.sig_issuer_keyid parsed with
+        | Some issuer when issuer = primary_keyid ->
+            (match ParsePGP.sig_revocation_reason parsed with
+             | None -> true     (* no reason subpacket = hard *)
+             | Some 0 -> true   (* NoReason *)
+             | Some 2 -> true   (* KeyCompromised *)
+             | Some _ -> false) (* soft revocation *)
+        | _ -> false
+    with _ -> false)
+
+(** drop:hardRevokedCruft — on hard-revoked keys, drop all UIDs and
+    keep only self-sigs on primary key and subkeys.
+    See resolve.go:45-61, 74-76. *)
+let drop_hard_revoked_cruft pkey =
+  let primary_keyid = Fingerprint.keyid_from_key ~short:false [pkey.key] in
+  if not (has_hard_revocation primary_keyid pkey.selfsigs) then pkey
+  else
+    let is_selfsig sig_pkt =
+      try match ParsePGP.sig_issuer_keyid
+                  (ParsePGP.parse_signature sig_pkt) with
+          | Some issuer -> issuer = primary_keyid
+          | None -> true  (* keep if can't determine issuer *)
+      with _ -> false
+    in
+    let selfsigs = List.filter pkey.selfsigs ~f:is_selfsig in
+    let subkeys = Utils.filter_map pkey.subkeys ~f:(fun (sk, sigs) ->
+      let self_sigs = List.filter sigs ~f:is_selfsig in
+      if self_sigs = [] then None
+      else Some (sk, self_sigs)) in
+    { pkey with selfsigs; uids = []; subkeys }
+
+(**********************************************************************)
+(***  Key Canonicalization  *******************************************)
+(**********************************************************************)
+
+(** Returns canonicalized version of key.  Raises Bad_key if the key
+    should be discarded.
+    - In hockeypuck mode: applies the full Hockeypuck-compatible filter
+      pipeline (drop:UAT, drop:unbound, crypto verification, etc.)
+    - In legacy mode: applies only yminsky.dedup + yminsky.merge
+      (original SKS behavior, compatible with legacy SKS servers). *)
+let tag_bad_key name f x =
+  try f x with Bad_key -> raise (Bad_key_at name)
+
+let canonicalize key =
+  if is_revocation_signature (List.hd key)
+    then raise Standalone_revocation_certificate;
+  check_key_size key;
+  try
+    match !Settings.filter_mode with
+    | "legacy" ->
+        let pkey = key_to_pkey key in
+        dedup_key_from_pkey pkey
+    | _ ->
+        let packets = pre_filter key in
+        let pkey = key_to_pkey packets in
+        let pkey = drop_uat pkey in
+        let pkey = drop_unparseable pkey in
+        let pkey = tag_bad_key "drop_implausible" drop_implausible pkey in
+        let pkey = tag_bad_key "drop_invalid_selfsig" drop_invalid_selfsig pkey in
+        let pkey = tag_bad_key "drop_unbound" drop_unbound pkey in
+        let pkey = drop_hard_revoked_cruft pkey in
+        dedup_key_from_pkey pkey
+  with Unparseable_packet_sequence -> raise (Bad_key_at "unparseable_sequence")
+
+(**********************************************************************)
+(***  Presentation Filter  ********************************************)
+(**********************************************************************)
 
 let drop_bad_sigs packlist =
   List.filter ~f:good_signature packlist

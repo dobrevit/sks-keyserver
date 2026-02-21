@@ -222,6 +222,7 @@ type v3sig =
 type v4sig =
     { v4s_sigtype: int;
       v4s_pk_alg: int;
+      v4s_hash_alg: int;
       v4s_hashed_subpackets: sigsubpacket list;
       v4s_unhashed_subpackets: sigsubpacket list;
       v4s_hash_value: string;

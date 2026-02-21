@@ -31,6 +31,11 @@ depends: [
   "base-bytes"
   "cryptokit"
   "num"
+  "zarith"
+  "digestif"
+  "mirage-crypto-pk"
+  "mirage-crypto-ec"
+  "lru"
 ]
 depexts: [
   ["libdb5.3-dev"] {os-family = "debian"}

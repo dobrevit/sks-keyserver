@@ -129,6 +129,11 @@ val max_uids_per_key : int ref
 val max_subkeys_per_key : int ref
 val max_key_size : int ref
 val max_selfsigs : int ref
+val filter_policy : string ref
+val filters : string ref
+val filter_mode : string ref
+val build_workers : int ref
+val recon_cache_size : int ref
 val parse_spec : (Arg.key * Arg.spec * Arg.doc) list
 val anon_options : string -> unit
 val usage_string : string

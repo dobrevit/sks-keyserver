@@ -106,7 +106,7 @@ struct
                 (* must use canonicalized version of key *)
                 Good (Keydb.key_to_metadata ckey)
             with
-              | Fixkey.Bad_key
+              | Fixkey.Bad_key | Fixkey.Bad_key_at _
               | Fixkey.Key_too_large
               | Fixkey.Standalone_revocation_certificate -> Bad
           end
@@ -168,16 +168,20 @@ struct
     set_logfile "fastbuild";
         perror "Running SKS %s%s" Common.version Common.version_suffix;
 
-    if Sys.file_exists (Lazy.force Settings.dbdir) then (
-      perror "KeyDB directory already exists.  Exiting.";
-      eprintf "KeyDB directory already exists.  Exiting.\n";
-      exit (-1)
-    );
-    Unix.mkdir (Lazy.force Settings.dbdir) ~perm:0o700;
-    Utils.initdbconf !Settings.basedir (Lazy.force Settings.dbdir);
+    let dbdir = Lazy.force Settings.dbdir in
+    if Sys.file_exists dbdir then (
+      if Utils.dir_has_db_files dbdir then (
+        perror "KeyDB directory already contains database files.  Exiting.";
+        eprintf "KeyDB directory already contains database files.  Exiting.\n";
+        exit (-1)
+      )
+    ) else
+      Unix.mkdir dbdir ~perm:0o700;
+    Utils.initdbconf !Settings.basedir dbdir;
 
     Keydb.open_dbs settings;
-    Keydb.set_meta ~key:"filters" ~data:"yminsky.dedup";
+    Keydb.set_meta ~key:"filters"
+      ~data:(String.concat ~sep:"," (Fixkey.filters ()));
 
     let filearray = Keydb.get_dump_filearray () in
     let nfarray = Array.mapi ~f:(fun i x -> (i,inchan_to_nextkey x))

@@ -97,8 +97,15 @@ struct
         end
       else None
     with
-        Fixkey.Bad_key ->
+        Fixkey.Bad_key | Fixkey.Bad_key_at _ ->
           perror "Key to be deleted: %s" (KeyHash.hexify (KeyHash.hash key));
+          Some (Delete key)
+      | Fixkey.Key_too_large ->
+          perror "Key too large, deleting: %s" (KeyHash.hexify (KeyHash.hash key));
+          Some (Delete key)
+      | Fixkey.Standalone_revocation_certificate ->
+          perror "Standalone revocation cert, deleting: %s"
+            (KeyHash.hexify (KeyHash.hash key));
           Some (Delete key)
 
 
@@ -351,8 +358,22 @@ struct
       Keydb.set_meta ~key:"filters" ~data:"yminsky.dedup,yminsky.merge";
       Keydb.unconditional_checkpoint ();
     )
-    else perror "Database already merged"
+    else perror "Database already merged";
 
+    (* Apply filters appropriate for the configured filter_mode.
+       In hockeypuck mode: full pipeline (drop:UAT, drop:unbound, etc.)
+       In legacy mode: only yminsky.dedup + yminsky.merge *)
+    let target_filters = Fixkey.filters () in
+    let needs_recanon = List.exists target_filters ~f:(fun f ->
+      not (List.mem f ~set:applied_filters)) in
+    if needs_recanon then (
+      perror "Applying %s-mode filters" !Settings.filter_mode;
+      canonicalize ();
+      Keydb.set_meta ~key:"filters"
+        ~data:(String.concat ~sep:"," (Fixkey.filters ()));
+      Keydb.unconditional_checkpoint ();
+    )
+    else perror "Filters already applied for %s mode" !Settings.filter_mode
 
 
   let comma = Str.regexp ","

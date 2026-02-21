@@ -29,7 +29,7 @@ jobs:
 
       - name: Install OCaml dependencies
         run: |
-          opam install -y cryptokit num ocamlfind
+          opam install -y . --deps-only
 
       - name: Build
         run: |

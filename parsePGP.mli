@@ -27,5 +27,8 @@ val ssp_ctime_id : int
 val ssp_exptime_id : int
 val int32_of_string : string -> int32
 val int64_of_string : string -> int64
+val sig_hash_alg : Packet.signature -> int
+val sig_issuer_keyid : Packet.signature -> string option
+val sig_revocation_reason : Packet.signature -> int option
 val get_times : Packet.signature -> int64 option * int64 option
 val get_key_exptimes : Packet.signature -> int64 option * int64 option

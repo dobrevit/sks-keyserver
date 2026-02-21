@@ -1,3 +1,7 @@
+val build_configdata : string list -> ReconMessages.configdata
+val test_configdata :
+  ReconMessages.configdata -> ReconMessages.configdata ->
+  [> `failed of string | `passed ]
 val connect :
   'a PrefixTree.tree ->
   filters:string list ->

@@ -36,7 +36,7 @@ module Unix = UnixLabels
 (** Build map containing configuration information *)
 let build_configdata filters =
   let map = Map.empty in
-  let map = (map |< "version") version in
+  let map = (map |< "version") recon_version in
   let map = (map |< "http port") (int_to_string http_port) in
   let map = (map |< "bitquantum") (int_to_string !Settings.bitquantum) in
   let map = (map |< "mbar") (int_to_string !Settings.mbar) in
@@ -57,24 +57,35 @@ let test_configdata local remote =
     if remote_version < compatible_version_tuple
     then `failed (sprintf "Requires version at least %s.  %s provided "
                     compatible_version_string remote_version_string)
-    else if not (Set.equal
-                   (Set.of_list (config_get_filters local))
-                   (Set.of_list (config_get_filters remote)))
-    then `failed (sprintf "filters do not match.\n\tlocal filters: %s\n\tremote filters: %s"
-                    (MList.to_string  ~f:(sprintf "%s")
-                       (config_get_filters local))
-                    (MList.to_string ~f:(sprintf "%s")
-                       (config_get_filters remote))
-                 )
     else
-      let bitquantum = int_of_string (remote |= "bitquantum") in
-      let mbar = int_of_string (remote |= "mbar") in
-      if bitquantum <> !Settings.bitquantum then
-        `failed "bitquantum values do not match"
-      else if mbar <> !Settings.mbar then
-        `failed "mbar values do not match"
+      let local_filters = Set.of_list (config_get_filters local) in
+      let remote_filters = Set.of_list (config_get_filters remote) in
+      let filter_ok =
+        if Set.equal local_filters remote_filters then true
+        else match !Settings.filter_policy with
+          | "ignore" -> true
+          | "strict" -> false
+          | _ -> (* "warn" = default *)
+              plerror 2 "Warning: filter mismatch (proceeding anyway).\n\tlocal: %s\n\tremote: %s"
+                (MList.to_string ~f:(sprintf "%s") (config_get_filters local))
+                (MList.to_string ~f:(sprintf "%s") (config_get_filters remote));
+              true
+      in
+      if not filter_ok then
+        `failed (sprintf "filters do not match.\n\tlocal filters: %s\n\tremote filters: %s"
+                   (MList.to_string ~f:(sprintf "%s")
+                      (config_get_filters local))
+                   (MList.to_string ~f:(sprintf "%s")
+                      (config_get_filters remote)))
       else
-        `passed
+        let bitquantum = int_of_string (remote |= "bitquantum") in
+        let mbar = int_of_string (remote |= "mbar") in
+        if bitquantum <> !Settings.bitquantum then
+          `failed "bitquantum values do not match"
+        else if mbar <> !Settings.mbar then
+          `failed "mbar values do not match"
+        else
+          `passed
   with
       Not_found -> `failed "Missing entry in configdata"
     | e ->

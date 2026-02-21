@@ -139,13 +139,14 @@ let info_tables () =
      <table summary=\"Keyserver Settings\">
      <tr><td>Hostname:</td><td>%s</td></tr>
      <tr><td>Nodename:</td><td>%s</td></tr>
-     <tr><td>Version:</td><td>%s%s</td></tr>
+     <tr><td>Version:</td><td>%s%s (build %s)</td></tr>
      <tr><td>Server contact:</td><td>%s</td></tr>
      <tr><td>HTTP port:</td><td>%d</td></tr>
      <tr><td>Recon port:</td><td>%d</td></tr>
      <tr><td>Debug level:</td><td>%d</td></tr>
 </table>\r\n"
-      !Settings.hostname !Settings.nodename Common.version Common.version_suffix
+      !Settings.hostname !Settings.nodename
+      Common.version Common.version_suffix Common.build_sha
       !Settings.server_contact http_port recon_port !Settings.debuglevel
   in
   let gossip_peers =
@@ -160,13 +161,34 @@ let info_tables () =
     sprintf "<h2>Outgoing Mailsync Peers</h2>\n<table summary=\"Mailsync Peers\">\n%s</table>"
       (String.concat ~sep:"" peers)
   in
+  let config =
+    sprintf
+      "<h2>Server Configuration</h2>
+     <table summary=\"Server Configuration\">
+     <tr><td>Filter mode:</td><td>%s</td></tr>
+     <tr><td>Filters:</td><td>%s</td></tr>
+     <tr><td>Filter policy:</td><td>%s</td></tr>
+     <tr><td>Recon cache size:</td><td>%s</td></tr>
+     <tr><td>Gossip interval:</td><td>%.0f min</td></tr>
+     <tr><td>Max key size:</td><td>%d bytes</td></tr>
+     <tr><td>Max recover:</td><td>%d</td></tr>
+</table>\r\n"
+      !Settings.filter_mode
+      (if !Settings.filters = "" then "(default)" else !Settings.filters)
+      !Settings.filter_policy
+      (if !Settings.recon_cache_size = 0 then "disabled"
+       else string_of_int !Settings.recon_cache_size)
+      (!Settings.gossip_interval /. 60.)
+      !Settings.max_key_size
+      !Settings.max_recover
+  in
   sprintf "%s\n\n<table summary=\"Keyserver Peers\" width=\"100%%\">
 <tr valign=\"top\"><td>
 %s
 </td><td>
 %s
-</td></tr></table>\r\n"
-    settings gossip_peers mail_peers
+</td></tr></table>\r\n%s"
+    settings gossip_peers mail_peers config
 
 
 (************************************************************)

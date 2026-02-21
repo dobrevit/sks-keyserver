@@ -325,7 +325,7 @@ let parse_signature packet =
     | 4 ->
         let sigtype = cin#read_byte in
         let pk_alg = cin#read_byte in
-        let _hash_alg = cin#read_byte in
+        let hash_alg = cin#read_byte in
 
         let hashed_subpacket_bytes = cin#read_int_size 2 in
         let hashed_subpackets = read_subpackets cin hashed_subpacket_bytes in
@@ -337,6 +337,7 @@ let parse_signature packet =
         let mpis = read_mpis cin in
         V4sig { v4s_sigtype = sigtype;
                 v4s_pk_alg = pk_alg;
+                v4s_hash_alg = hash_alg;
                 v4s_hashed_subpackets = hashed_subpackets;
                 v4s_unhashed_subpackets = unhashed_subpackets;
                 v4s_hash_value = hash_value;
@@ -350,7 +351,7 @@ let parse_signature packet =
            but handle v5 version gracefully if encountered. *)
         let sigtype = cin#read_byte in
         let pk_alg = cin#read_byte in
-        let _hash_alg = cin#read_byte in
+        let hash_alg = cin#read_byte in
 
         let hashed_subpacket_bytes = cin#read_int_size 2 in
         let hashed_subpackets = read_subpackets cin hashed_subpacket_bytes in
@@ -362,6 +363,7 @@ let parse_signature packet =
         let mpis = read_mpis cin in
         V4sig { v4s_sigtype = sigtype;
                 v4s_pk_alg = pk_alg;
+                v4s_hash_alg = hash_alg;
                 v4s_hashed_subpackets = hashed_subpackets;
                 v4s_unhashed_subpackets = unhashed_subpackets;
                 v4s_hash_value = hash_value;
@@ -373,7 +375,7 @@ let parse_signature packet =
            salt field between hash_value and signature MPIs *)
         let sigtype = cin#read_byte in
         let pk_alg = cin#read_byte in
-        let _hash_alg = cin#read_byte in
+        let hash_alg = cin#read_byte in
 
         let hashed_subpacket_bytes = cin#read_int_size 4 in
         let hashed_subpackets = read_subpackets cin hashed_subpacket_bytes in
@@ -388,6 +390,7 @@ let parse_signature packet =
         let mpis = (try read_mpis cin with _ -> []) in
         V4sig { v4s_sigtype = sigtype;
                 v4s_pk_alg = pk_alg;
+                v4s_hash_alg = hash_alg;
                 v4s_hashed_subpackets = hashed_subpackets;
                 v4s_unhashed_subpackets = unhashed_subpackets;
                 v4s_hash_value = hash_value;
@@ -398,6 +401,7 @@ let parse_signature packet =
         (* Unknown signature version: return a minimal parseable structure *)
         V4sig { v4s_sigtype = 0;
                 v4s_pk_alg = 0;
+                v4s_hash_alg = 0;
                 v4s_hashed_subpackets = [];
                 v4s_unhashed_subpackets = [];
                 v4s_hash_value = "\x00\x00";
@@ -437,6 +441,65 @@ let get_key_exptimes sign = match sign with
         | None -> (None,None)
         | Some _ -> (ctime,exptime_delta)
 
+
+(** Extract hash algorithm code from a parsed signature. *)
+let sig_hash_alg parsed_sig =
+  match parsed_sig with
+  | V3sig s -> s.v3s_hash_alg
+  | V4sig s -> s.v4s_hash_alg
+
+(** Extract 8-byte issuer keyid from a parsed signature.
+    Tries ssp_type 16 (issuer key ID) first, then falls back to
+    ssp_type 33 (issuer fingerprint) extracting the keyid from it. *)
+let sig_issuer_keyid parsed_sig =
+  match parsed_sig with
+  | V3sig s -> Some s.v3s_keyid
+  | V4sig s ->
+      let find_type16 subpackets =
+        try
+          let ssp = List.find subpackets
+            ~f:(fun ssp -> ssp.ssp_type = 16 && ssp.ssp_length = 8) in
+          Some ssp.ssp_body
+        with Not_found -> None
+      in
+      let find_type33 subpackets =
+        try
+          let ssp = List.find subpackets
+            ~f:(fun ssp -> ssp.ssp_type = 33 && ssp.ssp_length >= 9) in
+          let fp_version = Char.code ssp.ssp_body.[0] in
+          (match fp_version with
+           | 4 when ssp.ssp_length = 21 ->
+               (* v4: keyid = last 8 bytes of 20-byte fingerprint *)
+               Some (String.sub ssp.ssp_body ~pos:13 ~len:8)
+           | 5 | 6 when ssp.ssp_length = 33 ->
+               (* v5/v6: keyid = first 8 bytes of 32-byte fingerprint *)
+               Some (String.sub ssp.ssp_body ~pos:1 ~len:8)
+           | _ -> None)
+        with Not_found -> None
+      in
+      let find_in subpackets =
+        match find_type16 subpackets with
+        | Some _ as r -> r
+        | None -> find_type33 subpackets
+      in
+      (match find_in s.v4s_hashed_subpackets with
+       | Some _ as r -> r
+       | None -> find_in s.v4s_unhashed_subpackets)
+
+(** Extract revocation reason code from a signature.
+    ssp_type 29 = "reason for revocation". Byte 0 = reason code.
+    Returns None if no reason subpacket or not a v4 sig. *)
+let sig_revocation_reason parsed_sig =
+  match parsed_sig with
+  | V3sig _ -> None
+  | V4sig s ->
+      (try
+         let ssp = List.find s.v4s_hashed_subpackets
+           ~f:(fun ssp -> ssp.ssp_type = 29) in
+         if String.length ssp.ssp_body >= 1
+         then Some (Char.code ssp.ssp_body.[0])
+         else None
+       with Not_found -> None)
 
 let get_times sign = match sign with
   | V3sig sign ->

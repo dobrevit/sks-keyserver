@@ -329,6 +329,14 @@ let filter_map ~f list =
   in
   loop list []
 
+(** Check whether a directory contains actual database files, not just
+    configuration.  Returns true if any file other than DB_CONFIG exists. *)
+let dir_has_db_files dir =
+  try
+    let entries = Sys.readdir dir in
+    Array.exists (fun name -> name <> "DB_CONFIG") entries
+  with Sys_error _ -> false
+
 let copy_conf src dst fn =
     let command = "cp " ^ (Filename.concat src fn) ^
       " " ^ (Filename.concat dst "DB_CONFIG")  in

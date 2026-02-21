@@ -10,6 +10,8 @@ val version_tuple : int * int * int
 val version_suffix : string
 val compatible_version_tuple : int * int * int
 val version : string
+val recon_version : string
+val build_sha : string
 val compatible_version_string : string
 val period_regexp : Str.regexp
 val parse_version_string : string -> int * int * int

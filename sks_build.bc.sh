@@ -6,7 +6,7 @@
 # depending on your system
 
 fail() { echo Command failed unexpectedly.  Bailing out; exit -1; }
-SKS=sks.bc
+SKS=__BINDIR__/sks.bc
 
 echo === Running fastbuild... ===
 if ! $SKS fastbuild -n 10 -cache 100; then fail; fi

@@ -10,4 +10,5 @@ val size_split : 'a list -> int -> 'a list list
 val print_hashes : string -> string list -> unit
 val hashconvert : ZZp.zz list -> string list
 val log_diffs : string -> string list -> unit
+val add_hashes_to_recover_list : string list -> UnixLabels.sockaddr -> unit
 val update_recover_list : ZZp.zz list -> UnixLabels.sockaddr -> unit

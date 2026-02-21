@@ -38,6 +38,17 @@ struct
   open PTreeDB
   open Catchup
 
+  module SeenKey = struct
+    type t = string
+    let equal = String.equal
+    let hash = Hashtbl.hash
+  end
+  module SeenWeight = struct
+    type t = unit
+    let weight () = 1
+  end
+  module SeenCache = Lru.M.Make(SeenKey)(SeenWeight)
+
   let settings = {
     mbar = !Settings.mbar;
     bitquantum = !Settings.bitquantum;
@@ -76,6 +87,30 @@ struct
   let get_filters () = match !filters with
       None -> failwith "No filters retrieved"
     | Some filters -> filters
+
+  let seen_cache =
+    if !Settings.recon_cache_size > 0
+    then Some (SeenCache.create !Settings.recon_cache_size)
+    else None
+
+  (** Filter hashes through the seen-cache, promoting hits to prevent
+      LRU eviction.  Returns only unseen hashes. *)
+  let filter_seen_hashes hashes =
+    match seen_cache with
+    | None -> hashes
+    | Some cache ->
+      let total = List.length hashes in
+      let unseen = List.filter hashes ~f:(fun h ->
+        if SeenCache.mem h cache then begin
+          SeenCache.promote h cache;
+          false
+        end else
+          true) in
+      let cached = total - List.length unseen in
+      if cached > 0 then
+        plerror 3 "Recon seen-cache: %d/%d diffs already seen, %d new"
+          cached total (List.length unseen);
+      unseen
 
 
   (***************************************************************)
@@ -116,6 +151,15 @@ struct
 
       ( try
           let (hashes,httpaddr) = Queue.pop recover_list in
+          (* Secondary cache check: catch any hashes cached since queuing *)
+          let hashes = filter_seen_hashes hashes in
+          if hashes = [] then begin
+            plerror 4 "All hashes in batch already cached, skipping";
+            [Eventloop.Event (Unix.gettimeofday (),
+                              Eventloop.make_tc ~cb:get_missing_keys
+                                ~timeout ~name)]
+          end
+          else begin
           plerror 3
             "Requesting %d missing keys from %s, starting with %s"
             (List.length hashes) (sockaddr_to_string httpaddr)
@@ -130,6 +174,12 @@ struct
           if ack <> Ack 0
           then failwith ("Reconserver.get_missing_keys: " ^
                          "Unexpected reply to KeyStrings message");
+          (match seen_cache with
+           | None -> ()
+           | Some cache ->
+             List.iter hashes ~f:(fun h ->
+               SeenCache.add h () cache;
+               SeenCache.trim cache));
           let now = Unix.gettimeofday () in
           [
             Eventloop.Event
@@ -144,6 +194,7 @@ struct
                Eventloop.make_tc ~name ~timeout
                  ~cb:get_missing_keys; );
           ]
+          end
         with
           | Queue.Empty -> enable_gossip (); []
           | Eventloop.SigAlarm as e -> raise e
@@ -201,13 +252,15 @@ struct
         in
         plerror 4 "Reconciliation complete";
         let elements = ZSet.elements results in
-        let hashes = hashconvert elements in
-        print_hashes (sockaddr_to_string http_addr) hashes;
-        log_diffs (sprintf "diff-%s.txt" (sockaddr_to_name http_addr)) hashes;
-        if List.length elements > 0
+        let all_hashes = hashconvert elements in
+        print_hashes (sockaddr_to_string http_addr) all_hashes;
+        log_diffs (sprintf "diff-%s.txt" (sockaddr_to_name http_addr)) all_hashes;
+        (* Filter through seen-cache at recon time, like Hockeypuck does *)
+        let hashes = filter_seen_hashes all_hashes in
+        if hashes <> []
         then
           begin
-            update_recover_list elements http_addr;
+            add_hashes_to_recover_list hashes http_addr;
             [Eventloop.Event (Unix.gettimeofday () +. 10.0,
                               Eventloop.make_tc ~cb:get_missing_keys
                                 ~timeout:missing_keys_timeout
@@ -236,15 +289,17 @@ struct
         let (results,http_addr) =
           ReconCS.connect (get_ptree ()) ~filters ~partner
         in
-        let results = ZSet.elements results in
+        let elements = ZSet.elements results in
         plerror 4 "Reconciliation complete";
-        let hashes = hashconvert results in
-        print_hashes (sockaddr_to_string http_addr) hashes;
-        log_diffs (sprintf "diff-%s.txt" (sockaddr_to_name http_addr)) hashes;
-        match results with
+        let all_hashes = hashconvert elements in
+        print_hashes (sockaddr_to_string http_addr) all_hashes;
+        log_diffs (sprintf "diff-%s.txt" (sockaddr_to_name http_addr)) all_hashes;
+        (* Filter through seen-cache at recon time, like Hockeypuck does *)
+        let hashes = filter_seen_hashes all_hashes in
+        match hashes with
             [] -> []
           | _ ->
-              update_recover_list results http_addr;
+              add_hashes_to_recover_list hashes http_addr;
               [Eventloop.Event (Unix.gettimeofday (),
                                 Eventloop.make_tc ~cb:get_missing_keys
                                   ~timeout:missing_keys_timeout
@@ -343,6 +398,10 @@ struct
     plerror 1 "Copyright Yaron Minsky 2002-2013";
     plerror 1 "Licensed under GPL.  See LICENSE file for details";
     plerror 5 "recon port: %d" recon_port;
+    (match seen_cache with
+     | None -> plerror 3 "Recon seen-cache: disabled"
+     | Some cache -> plerror 3 "Recon seen-cache: capacity %d"
+                       (SeenCache.capacity cache));
 
     init_db settings;
     init_ptree settings
@@ -355,7 +414,12 @@ struct
     (* do initial catchup to ensure reconciliation data
        is synchronized with key database *)
     plerror 4 "Fetching filters";
-    filters := Some (ReconComm.fetch_filters ());
+    let db_filters = ReconComm.fetch_filters () in
+    let extra = if !Settings.filters = "" then []
+                else Str.split (Str.regexp ",") !Settings.filters in
+    let all_filters = db_filters @ extra in
+    plerror 3 "Filters: %s" (String.concat ~sep:"," all_filters);
+    filters := Some all_filters;
     plerror 4 "Starting event loop";
     Eventloop.evloop
       ( [ Eventloop.Event (0.0, Eventloop.Callback catchup) ]

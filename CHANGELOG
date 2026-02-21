@@ -1,4 +1,51 @@
-Development (1.3.0):
+1.3.0:
+
+  Recon Hash Convergence Fixes:
+  - Fix DSA signature verification: skip Dsa.massage (which reduces mod q)
+    and pass raw digest directly to Dsa.verify, whose internal truncation
+    matches FIPS 186-3 §4.6 and Go's go-crypto behavior
+  - Fix signature verification incorrectly dropping self-sigs with
+    unsupported parameters: ECDSA keys using curves outside P-256/P-384/P-521
+    (e.g. secp256k1, Brainpool), EdDSA with non-Ed25519 curves (e.g. Ed448),
+    and DSA keys rejected by mirage-crypto parameter validation now keep their
+    signatures (conservative behavior), matching Hockeypuck's go-crypto
+  - Add third-party signature type filtering in drop:implausible to match
+    Hockeypuck's SigInfo() behavior: only keep certification types (0x10-0x13,
+    0x30) on UIDs, revocation/direct (0x1F, 0x20) on primary keys, and subkey
+    revocation (0x28) on subkeys
+  - Enhance recon batch diagnostics with per-reason drop counts (e.g.
+    drop_invalid_selfsig, drop_implausible, unparseable) for faster debugging
+
+  Hockeypuck Reconciliation Compatibility:
+  - Implement filter negotiation protocol for reconciliation handshake;
+    add filter_policy setting (strict/warn/ignore) to control how filter
+    mismatches with peers are handled
+  - Implement all 11 Hockeypuck sksDefaultFilters for hash-compatible
+    peering: drop:UAT, drop:hardRevokedCruft, drop:implausible,
+    drop:invalidSelfSig, drop:structuralMartian, drop:unbound,
+    drop:unparseable, schema:application/pgp-keys, versions:34,
+    yminsky.dedup, yminsky.merge
+  - Add cryptographic signature verification module (sigVerify.ml):
+    full RFC 4880 signed data reconstruction, 2-byte hash-tag check
+    for third-party sigs (drop:implausible), and full public-key
+    verification for self-sigs (drop:invalidSelfSig) supporting
+    RSA, DSA, ECDSA (P-256/P-384/P-521), and Ed25519
+  - Add LRU seen-cache for reconciliation to prevent repeatedly fetching
+    unfixable keys (ECDSA unsupported curves, etc.); configurable via
+    -recon_cache_size (default 65536, 0 to disable). Uses opam 'lru' package.
+  - New dependencies: zarith, digestif, mirage-crypto-pk, mirage-crypto-ec, lru
+  - Add configurable filter_mode setting: 'hockeypuck' (default) applies
+    the full Hockeypuck-compatible filter pipeline; 'legacy' applies only
+    yminsky.dedup + yminsky.merge for backward compatibility with legacy
+    SKS servers
+  - BREAKING CHANGE: hockeypuck mode (default) changes key canonical form
+    and MD5 hashes.  Upgrading requires running 'sks cleandb' followed by
+    'sks pbuild' to rebuild the prefix tree.  Set filter_mode to 'legacy'
+    to upgrade without database changes and retain legacy SKS peering.
+    Simultaneous peering with both Hockeypuck and legacy SKS is not
+    possible due to hash divergence.
+  - Add comprehensive unit tests for filter behavior, hash-tag verification,
+    crypto verification, and filter mode switching (recon_compat_test.ml)
 
   Modern OCaml Compilation:
   - Update C stubs (crc.c, bdb/bdb_stubs.c) to use caml_* prefixed API
@@ -9,6 +56,18 @@ Development (1.3.0):
   - Remove bigarray from Makefile packages (part of stdlib since OCaml 4.07)
   - Remove dead code (commented-out nonblocking_reader/writer) from channel.ml
   - Minimum OCaml version is now 4.08
+
+  Build Improvements:
+  - Support bounded batch key processing in 'sks build': use -n <keys>
+    to limit memory usage on constrained systems (default: unlimited).
+    Example: 'sks build -n 10000 dump/*.pgp' for 1GB RAM environments
+  - Parallel key canonicalization during build: use -build_workers N
+    to distribute CPU-bound crypto verification across N processes.
+    Default (0) auto-detects CPU count; use 1 for sequential mode
+
+  Key Protection:
+  - No-modify tag: mark keys to prevent merging/updating via recon or HKP.
+    New commands: 'sks mark_no_modify <hash>' and 'sks unmark_no_modify <hash>'
 
   Poison Key Defense (CVE-2019-13050):
   - Add configurable limits to prevent certificate flooding attacks:
@@ -40,7 +99,7 @@ Development (1.3.0):
     instead of raising exceptions
   - Add comprehensive unit tests for modern key support (modern_key_test.ml)
 
-Development (1.2.0):
+1.2.0:
   - Update code to allow for building with ocaml >= 4.02 and using other
     compilers than gcc.
   - Unbundle cryptokit, this is now required as an external dependency

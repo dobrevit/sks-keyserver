@@ -56,3 +56,11 @@ let run () =
   end;
   printf "Done\n%!";
 
+  printf "Running Recon compatibility unit tests:%!";
+  begin
+    try Recon_compat_test.run ()
+    with Unit_test_failure s ->
+      printf "\nUnit test failure: %s\n%!" s
+  end;
+  printf "Done\n%!";
+

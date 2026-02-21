@@ -212,6 +212,20 @@ let send_mailsyncs = ref true
 (** WHether to log hashes of most-recently-found diff *)
 let log_diffs = ref true
 
+(** Filter matching policy for reconciliation: strict, warn, or ignore *)
+let filter_policy = ref "warn"
+
+(** Extra filters to advertise during reconciliation *)
+let filters = ref ""
+
+(** Filter mode: "hockeypuck" applies full Hockeypuck-compatible pipeline,
+    "legacy" applies only yminsky.dedup/merge for peering with legacy SKS *)
+let filter_mode = ref "hockeypuck"
+let set_filter_mode value =
+  if value <> "legacy" && value <> "hockeypuck" then
+    failwith (Printf.sprintf "Invalid filter_mode: %s (must be 'legacy' or 'hockeypuck')" value);
+  filter_mode := value
+
 let from_addr = ref None
 let set_from_addr value = from_addr := Some value
 let get_from_addr () =
@@ -261,6 +275,16 @@ let set_max_key_size value = max_key_size := value
 let max_selfsigs = ref 200
 let set_max_selfsigs value = max_selfsigs := value
 
+(** Number of parallel worker processes for build canonicalization.
+    0 = auto-detect CPU count, 1 = sequential (no fork), N = N workers *)
+let build_workers = ref 0
+let set_build_workers value = build_workers := value
+
+(** LRU cache size for recon seen-hashes (0 = disabled) *)
+let recon_cache_size = ref 131072
+let set_recon_cache_size value = recon_cache_size := value
+
+
 (*****************************************************************)
 
 (** Specifies the options along with the corresponding actions.
@@ -277,9 +301,10 @@ let parse_spec =
     ("-nodename", Arg.String set_nodename, " current nodename");
     ("-d", Arg.Int set_drop, " Number of keys to drop at random " ^
        "when synchronizing");
-    ("-n", Arg.Int set_n, " Number of key dump files to load at once " ^
-       "when used with build, multiple of 15000 keys when used with " ^
-       "fastbuild.");
+    ("-n", Arg.Int set_n, " Max keys per batch for build (0=unlimited), " ^
+       "multiple of 15000 keys for fastbuild, " ^
+       "actions per batch for cleandb. " ^
+       "Reduce for memory-constrained environments (e.g. -n 10000).");
     ("-max_internal_matches", Arg.Int set_max_internal_matches,
      " Maximum number of matches for most specific word in a " ^
      "multi-word search");
@@ -382,6 +407,17 @@ let parse_spec =
      " Maximum total key size in bytes (poison key defense)");
     ("-max_selfsigs", Arg.Int set_max_selfsigs,
      " Maximum number of self-signatures per key (poison key defense)");
+    ("-filter_policy", Arg.Set_string filter_policy,
+     " Filter matching policy for recon: strict (exact match), warn (log and allow), ignore (skip check)");
+    ("-filters", Arg.Set_string filters,
+     " Extra filters to advertise during recon, comma-separated (e.g. cyborg.keyserver-only)");
+    ("-filter_mode", Arg.String set_filter_mode,
+     " Filter mode: 'hockeypuck' (default, peers with Hockeypuck) or 'legacy' (peers with legacy SKS)");
+    ("-build_workers", Arg.Int set_build_workers,
+     " Parallel workers for build canonicalization " ^
+     "(0=auto-detect CPUs, 1=sequential, N=N workers)");
+    ("-recon_cache_size", Arg.Int set_recon_cache_size,
+     " LRU cache size for recon seen-hashes (0=disabled, default 131072)");
   ]
 
 let parse_spec = Arg.align parse_spec
