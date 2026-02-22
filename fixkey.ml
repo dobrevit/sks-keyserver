@@ -273,8 +273,10 @@ let drop_implausible pkey =
   result
 
 (** drop:invalidSelfSig — remove self-sigs that fail full cryptographic
-    verification.  If a UID/subkey loses all self-sigs, it is dropped.
-    If the entire key has no valid self-sigs, raise Bad_key.
+    verification.  Components that HAD self-sigs but lost them all are
+    dropped.  Components that never had self-sigs (only third-party
+    certifications) are kept — Hockeypuck preserves these.
+    The key itself is only dropped if it had self-sigs that all failed.
     See Hockeypuck resolve.go:37-142. *)
 let drop_invalid_selfsig pkey =
   let primary_keyid = Fingerprint.keyid_from_key ~short:false [pkey.key] in
@@ -309,17 +311,25 @@ let drop_invalid_selfsig pkey =
   in
   let selfsigs = filter_sigs SigVerify.Direct_key pkey.selfsigs in
   let uids = Utils.filter_map pkey.uids ~f:(fun (uid, sigs) ->
+    let had_selfsig = List.exists sigs ~f:is_selfsig in
     let sigs = filter_sigs (SigVerify.Uid_target uid) sigs in
-    if has_selfsig primary_keyid sigs then Some (uid, sigs) else None) in
+    (* Drop UID only if it HAD self-sigs that all failed verification.
+       Keep UIDs with only third-party sigs (Hockeypuck does). *)
+    if had_selfsig && not (has_selfsig primary_keyid sigs) then None
+    else if sigs = [] then None
+    else Some (uid, sigs)) in
   let subkeys = Utils.filter_map pkey.subkeys ~f:(fun (sk, sigs) ->
+    let had_selfsig = List.exists sigs ~f:is_selfsig in
     let sigs = filter_sigs (SigVerify.Subkey_target sk) sigs in
-    if has_selfsig primary_keyid sigs then Some (sk, sigs) else None) in
-  if uids = [] && subkeys = []
+    if had_selfsig && not (has_selfsig primary_keyid sigs) then None
+    else if sigs = [] then None
+    else Some (sk, sigs)) in
+  (* Only drop key if it had self-sigs but they all failed.
+     Keys with only third-party sigs pass through. *)
+  if !total_selfsigs > 0 && uids = [] && subkeys = []
      && not (has_selfsig primary_keyid selfsigs)
   then begin
-    (* Key is about to be dropped — log self-sig failure breakdown *)
     let key_algo = try int_of_char pkey.key.packet_body.[0 + (
-      (* v4+: algo at offset 5; v2/v3: algo at offset 7 *)
       let version = int_of_char pkey.key.packet_body.[0] in
       if version >= 4 then 5 else 7)]
     with _ -> -1 in
@@ -330,50 +340,22 @@ let drop_invalid_selfsig pkey =
       keyid_hex key_algo !total_selfsigs);
     Hashtbl.iter failed_algos ~f:(fun ~key:algo ~data:n ->
       Buffer.add_string buf (Printf.sprintf "algo%d=%d " algo n));
-    (* Diagnostic: when no self-sigs found, log why *)
-    if !total_selfsigs = 0 then begin
-      let total_sigs = ref 0 in
-      let no_issuer = ref 0 in
-      let mismatched = ref 0 in
-      let example_issuer = ref "" in
-      let check_sig sig_pkt =
-        incr total_sigs;
-        try match ParsePGP.sig_issuer_keyid
-                  (ParsePGP.parse_signature sig_pkt) with
-            | Some issuer ->
-                if issuer <> primary_keyid then begin
-                  incr mismatched;
-                  if !example_issuer = "" then
-                    example_issuer := Utils.hexstring issuer
-                end
-            | None -> incr no_issuer
-        with _ -> incr no_issuer in
-      List.iter pkey.selfsigs ~f:check_sig;
-      List.iter pkey.uids ~f:(fun (_, sigs) ->
-        List.iter sigs ~f:check_sig);
-      List.iter pkey.subkeys ~f:(fun (_, sigs) ->
-        List.iter sigs ~f:check_sig);
-      Buffer.add_string buf (Printf.sprintf
-        "[sigs=%d no_issuer=%d mismatched=%d example=%s]"
-        !total_sigs !no_issuer !mismatched
-        (if !example_issuer = "" then "none" else !example_issuer))
-    end;
     plerror 3 "%s" (Buffer.contents buf);
     raise Bad_key
   end;
   { pkey with selfsigs; uids; subkeys }
 
-(** drop:unbound — remove UIDs and subkeys that have no self-certification.
-    Hockeypuck drops these in resolve.go:79-134 after crypto verification.
-    We check issuer keyid match (structural check after crypto filtering). *)
+(** drop:unbound — remove UIDs and subkeys that have no signatures at all.
+    After drop_invalid_selfsig removes failed self-sigs, components left
+    with no sigs are unbound.  Components with third-party sigs are kept
+    to match Hockeypuck's behavior.
+    See Hockeypuck resolve.go:79-134. *)
 let drop_unbound pkey =
-  let primary_keyid = Fingerprint.keyid_from_key ~short:false [pkey.key] in
   let uids = List.filter pkey.uids
-    ~f:(fun (_uid, sigs) -> has_selfsig primary_keyid sigs) in
+    ~f:(fun (_uid, sigs) -> sigs <> []) in
   let subkeys = List.filter pkey.subkeys
-    ~f:(fun (_sk, sigs) -> has_selfsig primary_keyid sigs) in
-  if uids = [] && subkeys = []
-     && not (has_selfsig primary_keyid pkey.selfsigs)
+    ~f:(fun (_sk, sigs) -> sigs <> []) in
+  if uids = [] && subkeys = [] && pkey.selfsigs = []
   then raise Bad_key;
   { pkey with uids; subkeys }
 

@@ -393,10 +393,30 @@ let test_drop_unbound_uid () =
                uids = [(uid_self, [self_sig]); (uid_other, [other_sig])];
                subkeys = [] } in
   let filtered = Fixkey.drop_unbound pkey in
-  test "drop_unbound removes unbound UID" (List.length filtered.KeyMerge.uids = 1);
+  test "drop_unbound keeps UID with third-party sig"
+    (List.length filtered.KeyMerge.uids = 2);
+  test "drop_unbound preserves UID order"
+    (let (first, _) = List.hd filtered.KeyMerge.uids in
+     first.packet_body = "Self-signed UID")
+
+let test_drop_unbound_removes_empty_uid () =
+  let pk_body = make_pubkey_body () in
+  let pk = make_packet 6 pk_body in
+  let keyid = Fingerprint.keyid_from_key ~short:false [pk] in
+  let uid_good = make_packet 13 "Good UID" in
+  let uid_empty = make_packet 13 "Empty UID" in
+  let self_sig = make_v4_selfsig keyid in
+  let direct_sig = make_v4_selfsig keyid in
+  let pkey = { KeyMerge.key = pk;
+               selfsigs = [direct_sig];
+               uids = [(uid_good, [self_sig]); (uid_empty, [])];
+               subkeys = [] } in
+  let filtered = Fixkey.drop_unbound pkey in
+  test "drop_unbound removes UID with no sigs"
+    (List.length filtered.KeyMerge.uids = 1);
   let (remaining, _) = List.hd filtered.KeyMerge.uids in
-  test "drop_unbound keeps self-signed UID"
-    (remaining.packet_body = "Self-signed UID")
+  test "drop_unbound keeps UID with sig"
+    (remaining.packet_body = "Good UID")
 
 let test_drop_unbound_keeps_selfsigned () =
   let pk_body = make_pubkey_body () in
@@ -804,6 +824,7 @@ let run () =
   test_sig_issuer_keyid ();
   test_sig_revocation_reason ();
   test_drop_unbound_uid ();
+  test_drop_unbound_removes_empty_uid ();
   test_drop_unbound_keeps_selfsigned ();
   test_hard_revocation_detection ();
   test_hard_revoked_strips_uids ();
