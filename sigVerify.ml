@@ -175,15 +175,39 @@ let check_hash_tag ~primary_key ~target ~sig_pkt =
       Char.code digest.[0] = Char.code hash_value.[0]
       && Char.code digest.[1] = Char.code hash_value.[1] in
     if not matches && !Settings.debuglevel >= 5 then begin
-      let pk_version = Char.code primary_key.packet_body.[0] in
+      let pk_body = primary_key.packet_body in
+      let pk_version = Char.code pk_body.[0] in
+      let pk_algo = Char.code pk_body.[5] in
+      (* Compute expected body length from MPIs *)
+      let mpi_end = try
+        let cin = new Channel.string_in_channel pk_body 0 in
+        ignore (cin#read_byte);           (* version *)
+        ignore (cin#read_int64_size 4);   (* timestamp *)
+        (match pk_version with 2 | 3 -> ignore (cin#read_int_size 2) | _ -> ());
+        ignore (cin#read_byte);           (* algorithm *)
+        (match pk_version with 5 | 6 -> ignore (cin#read_int_size 4) | _ -> ());
+        let n_mpis = match pk_algo with
+          | 1 | 2 | 3 -> 2   (* RSA: n, e *)
+          | 16 | 20 -> 3     (* ElGamal: p, g, y *)
+          | 17 -> 4          (* DSA: p, q, g, y *)
+          | _ -> 0 in
+        for _i = 1 to n_mpis do
+          ignore (ParsePGP.read_mpi cin)
+        done;
+        ignore (cin#read_byte); (* probe: will raise if exactly at end *)
+        -1  (* if we get here, there ARE trailing bytes *)
+      with End_of_file -> 0  (* no trailing bytes, MPIs consumed all *)
+         | _ -> -1 in
+      let trail = String.length pk_body - (if mpi_end = 0 then
+        String.length pk_body else 0) in
       Common.plerror 5
         "hashtag-mismatch expected=%02X%02X computed=%02X%02X \
-         sigv=%d pk_v=%d pk_len=%d sd_len=%d tr_len=%d"
+         sigv=%d pk_v=%d pk_algo=%d pk_len=%d sd_len=%d tr_len=%d trail=%d"
         (Char.code hash_value.[0]) (Char.code hash_value.[1])
         (Char.code digest.[0]) (Char.code digest.[1])
-        sig_version pk_version
-        (String.length primary_key.packet_body)
-        (String.length signed_data) (String.length trailer)
+        sig_version pk_version pk_algo
+        (String.length pk_body)
+        (String.length signed_data) (String.length trailer) trail
     end;
     matches
   with _ -> true  (* if we can't check, keep the sig *)
