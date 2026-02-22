@@ -135,6 +135,9 @@ struct
                 ~domain:(Unix.domain_of_sockaddr recon_command_addr)
                 ~kind:Unix.SOCK_STREAM ~protocol:0 in
       protect ~f:(fun () ->
+        (* 2-second timeout so we don't block dbserver if reconserver is busy *)
+        Unix.setsockopt_float s Unix.SO_RCVTIMEO 2.0;
+        Unix.setsockopt_float s Unix.SO_SNDTIMEO 2.0;
         Unix.connect s ~addr:recon_command_addr;
         let cin = Channel.sys_in_from_fd s in
         let cout = Channel.sys_out_from_fd s in
