@@ -323,11 +323,41 @@ let drop_invalid_selfsig pkey =
       let version = int_of_char pkey.key.packet_body.[0] in
       if version >= 4 then 5 else 7)]
     with _ -> -1 in
+    let keyid_hex = Utils.hexstring primary_keyid in
     let buf = Buffer.create 64 in
     Buffer.add_string buf (Printf.sprintf
-      "Dropping key (algo=%d, %d self-sigs failed): " key_algo !total_selfsigs);
+      "Dropping key %s (algo=%d, %d self-sigs failed): "
+      keyid_hex key_algo !total_selfsigs);
     Hashtbl.iter failed_algos ~f:(fun ~key:algo ~data:n ->
       Buffer.add_string buf (Printf.sprintf "algo%d=%d " algo n));
+    (* Diagnostic: when no self-sigs found, log why *)
+    if !total_selfsigs = 0 then begin
+      let total_sigs = ref 0 in
+      let no_issuer = ref 0 in
+      let mismatched = ref 0 in
+      let example_issuer = ref "" in
+      let check_sig sig_pkt =
+        incr total_sigs;
+        try match ParsePGP.sig_issuer_keyid
+                  (ParsePGP.parse_signature sig_pkt) with
+            | Some issuer ->
+                if issuer <> primary_keyid then begin
+                  incr mismatched;
+                  if !example_issuer = "" then
+                    example_issuer := Utils.hexstring issuer
+                end
+            | None -> incr no_issuer
+        with _ -> incr no_issuer in
+      List.iter pkey.selfsigs ~f:check_sig;
+      List.iter pkey.uids ~f:(fun (_, sigs) ->
+        List.iter sigs ~f:check_sig);
+      List.iter pkey.subkeys ~f:(fun (_, sigs) ->
+        List.iter sigs ~f:check_sig);
+      Buffer.add_string buf (Printf.sprintf
+        "[sigs=%d no_issuer=%d mismatched=%d example=%s]"
+        !total_sigs !no_issuer !mismatched
+        (if !example_issuer = "" then "none" else !example_issuer))
+    end;
     plerror 3 "%s" (Buffer.contents buf);
     raise Bad_key
   end;
