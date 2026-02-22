@@ -113,6 +113,33 @@ struct
       unseen
 
 
+  (** Write recon stats to a shared file for dbserver to read.
+      Uses atomic rename to avoid partial reads. *)
+  let write_recon_stats () =
+    try
+      let stats = [
+        sprintf "cache_size=%d"
+          (match seen_cache with
+           | None -> 0 | Some c -> SeenCache.size c);
+        sprintf "cache_capacity=%d"
+          (match seen_cache with
+           | None -> 0 | Some c -> SeenCache.capacity c);
+        sprintf "queue_depth=%d" (Queue.length recover_list);
+        sprintf "gossip_enabled=%b" (not (gossip_disabled ()));
+      ] in
+      let tmp = Common.recon_stats_file ^ ".tmp" in
+      let oc = open_out tmp in
+      List.iter stats ~f:(fun s ->
+        output_string oc s; output_char oc '\n');
+      close_out oc;
+      Sys.rename tmp Common.recon_stats_file
+    with e ->
+      eplerror 2 e "Failed to write recon stats file"
+
+  let update_recon_stats () =
+    write_recon_stats ();
+    []
+
   (***************************************************************)
   (*  Handlers  *************************************************)
   (***************************************************************)
@@ -357,16 +384,17 @@ struct
                         eplerror 1 e "set_maxnodes Transaction aborting";
                         abort_txnopt txn)
              | ("recon_stats", `none) ->
-                 let stats = [
-                   sprintf "cache_size=%d"
-                     (match seen_cache with
-                      | None -> 0 | Some c -> SeenCache.size c);
-                   sprintf "cache_capacity=%d"
-                     (match seen_cache with
-                      | None -> 0 | Some c -> SeenCache.capacity c);
-                   sprintf "queue_depth=%d" (Queue.length recover_list);
-                   sprintf "gossip_enabled=%b" (not (gossip_disabled ()));
-                 ] in
+                 write_recon_stats ();
+                 let stats = try
+                   let ic = open_in Common.recon_stats_file in
+                   let rec read acc =
+                     match (try Some (input_line ic)
+                            with End_of_file -> None) with
+                     | Some l -> read (l :: acc)
+                     | None -> List.rev acc in
+                   let lines = read [] in
+                   close_in ic; lines
+                 with _ -> [] in
                  marshal cout (ReconStats stats)
              | _ ->
                  failwith "Unexpected config request"
@@ -432,10 +460,12 @@ struct
     let all_filters = db_filters @ extra in
     plerror 3 "Filters: %s" (String.concat ~sep:"," all_filters);
     filters := Some all_filters;
+    write_recon_stats ();  (* initial stats file before event loop *)
     plerror 4 "Starting event loop";
     Eventloop.evloop
       ( [ Eventloop.Event (0.0, Eventloop.Callback catchup) ]
         @ (Ehandlers.repeat_forever_simple catchup_interval catchup)
+        @ (Ehandlers.repeat_forever_simple 60. update_recon_stats)
         @ (if !Settings.gossip
            then Ehandlers.repeat_forever
              ~jitter:0.1 (* 10% randomness in delay interval *)

@@ -236,6 +236,7 @@ let http_port = !Settings.hkp_port
 let http_address = !Settings.hkp_address
 let db_command_name = Filename.concat !Settings.basedir "db_com_sock"
 let recon_command_name = Filename.concat !Settings.basedir "recon_com_sock"
+let recon_stats_file = Filename.concat !Settings.basedir "recon_stats"
 
 let db_command_addr = Unix.ADDR_UNIX db_command_name
 let recon_command_addr = Unix.ADDR_UNIX recon_command_name

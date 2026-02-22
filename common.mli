@@ -43,6 +43,7 @@ val http_port : int
 val http_address : string
 val db_command_name : string
 val recon_command_name : string
+val recon_stats_file : string
 val db_command_addr : Unix.sockaddr
 val recon_command_addr : Unix.sockaddr
 val recon_addr_to_http_addr : Unix.sockaddr -> Unix.sockaddr

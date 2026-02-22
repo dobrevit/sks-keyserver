@@ -129,28 +129,20 @@ struct
 
   (******************************************************************)
 
+  (** Read recon stats from the shared file written by reconserver.
+      Returns key=value pairs or empty list if file doesn't exist yet. *)
   let query_recon_stats () =
     try
-      let s = Unix.socket ?cloexec:None
-                ~domain:(Unix.domain_of_sockaddr recon_command_addr)
-                ~kind:Unix.SOCK_STREAM ~protocol:0 in
+      let ic = open_in recon_stats_file in
       protect ~f:(fun () ->
-        (* 5-second timeout so we don't block dbserver if reconserver is busy *)
-        Unix.setsockopt_float s Unix.SO_RCVTIMEO 5.0;
-        Unix.setsockopt_float s Unix.SO_SNDTIMEO 5.0;
-        Unix.connect s ~addr:recon_command_addr;
-        let cin = Channel.sys_in_from_fd s in
-        let cout = Channel.sys_out_from_fd s in
-        DbMessages.marshal cout (Config ("recon_stats", `none));
-        match (DbMessages.unmarshal cin).msg with
-        | ReconStats pairs -> pairs
-        | _ -> [])
-      ~finally:(fun () ->
-        (try Unix.shutdown s ~mode:Unix.SHUTDOWN_ALL with _ -> ());
-        Unix.close s)
-    with e ->
-      plerror 4 "query_recon_stats: %s" (Printexc.to_string e);
-      []
+        let rec read acc =
+          match (try Some (input_line ic)
+                 with End_of_file -> None) with
+          | Some l -> read (l :: acc)
+          | None -> List.rev acc in
+        read [])
+      ~finally:(fun () -> close_in ic)
+    with _ -> []
 
   let get_stats () =
     let today = Stats.round_up_to_day (Unix.gettimeofday ()) in
