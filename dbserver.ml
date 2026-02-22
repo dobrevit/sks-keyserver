@@ -135,9 +135,9 @@ struct
                 ~domain:(Unix.domain_of_sockaddr recon_command_addr)
                 ~kind:Unix.SOCK_STREAM ~protocol:0 in
       protect ~f:(fun () ->
-        (* 2-second timeout so we don't block dbserver if reconserver is busy *)
-        Unix.setsockopt_float s Unix.SO_RCVTIMEO 2.0;
-        Unix.setsockopt_float s Unix.SO_SNDTIMEO 2.0;
+        (* 5-second timeout so we don't block dbserver if reconserver is busy *)
+        Unix.setsockopt_float s Unix.SO_RCVTIMEO 5.0;
+        Unix.setsockopt_float s Unix.SO_SNDTIMEO 5.0;
         Unix.connect s ~addr:recon_command_addr;
         let cin = Channel.sys_in_from_fd s in
         let cout = Channel.sys_out_from_fd s in
@@ -145,8 +145,12 @@ struct
         match (DbMessages.unmarshal cin).msg with
         | ReconStats pairs -> pairs
         | _ -> [])
-      ~finally:(fun () -> Unix.close s)
-    with _ -> []
+      ~finally:(fun () ->
+        (try Unix.shutdown s ~mode:Unix.SHUTDOWN_ALL with _ -> ());
+        Unix.close s)
+    with e ->
+      plerror 4 "query_recon_stats: %s" (Printexc.to_string e);
+      []
 
   let get_stats () =
     let today = Stats.round_up_to_day (Unix.gettimeofday ()) in
@@ -869,6 +873,9 @@ struct
         @
           (Ehandlers.repeat_at_hour !Settings.stat_calc_hour
              calculate_stats_page)
+        @ (* Delayed stats refresh so recon status is populated after boot *)
+          [Eventloop.Event (Unix.gettimeofday () +. 60.,
+             Eventloop.Callback calculate_stats_page)]
       )
 
       (
