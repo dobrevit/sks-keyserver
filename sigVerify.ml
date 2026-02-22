@@ -110,8 +110,10 @@ type sig_target =
 
 (** Build the signed data for a given signature type and target.
     Returns the data that gets hashed (before the trailer).
-    See RFC 4880 Section 5.2.4. *)
-let build_signed_data ~primary_key ~target sigtype =
+    [sig_version] is the signature packet version (3 or 4).
+    V3 UID certifications omit the UID header (RFC 4880 Section 5.2.4).
+    See also go-crypto: userIdSignatureV3Hash vs userIdSignatureHash. *)
+let build_signed_data ~primary_key ~target ~sig_version sigtype =
   let pk_body = primary_key.packet_body in
   let pk_version = Char.code pk_body.[0] in
   let key_hdr = key_material_header pk_version (String.length pk_body) in
@@ -120,9 +122,14 @@ let build_signed_data ~primary_key ~target sigtype =
     (* UID certification or cert revocation *)
     (match target with
      | Uid_target uid_pkt ->
-       let is_uat = uid_pkt.packet_type = User_Attribute_Packet in
-       let uid_hdr = uid_header is_uat (String.length uid_pkt.packet_body) in
-       key_hdr ^ pk_body ^ uid_hdr ^ uid_pkt.packet_body
+       if sig_version >= 4 then
+         (* V4+: include UID/UAT header per RFC 4880 Section 5.2.4 *)
+         let is_uat = uid_pkt.packet_type = User_Attribute_Packet in
+         let uid_hdr = uid_header is_uat (String.length uid_pkt.packet_body) in
+         key_hdr ^ pk_body ^ uid_hdr ^ uid_pkt.packet_body
+       else
+         (* V3: raw UID body only, no header *)
+         key_hdr ^ pk_body ^ uid_pkt.packet_body
      | _ -> raise Exit)
   | 0x18 | 0x19 | 0x28 ->
     (* Subkey binding / primary key binding / subkey revocation *)
@@ -153,7 +160,9 @@ let check_hash_tag ~primary_key ~target ~sig_pkt =
       | V3sig s -> s.v3s_hash_value | V4sig s -> s.v4s_hash_value in
     let sigtype = match parsed with
       | V3sig s -> s.v3s_sigtype | V4sig s -> s.v4s_sigtype in
-    let signed_data = build_signed_data ~primary_key ~target sigtype in
+    let sig_version = match parsed with
+      | V3sig _ -> 3 | V4sig _ -> 4 in
+    let signed_data = build_signed_data ~primary_key ~target ~sig_version sigtype in
     let (hash_alg, trailer) = match parsed with
       | V3sig s -> v3_sig_trailer s
       | V4sig _ -> v4_sig_trailer sig_pkt.packet_body
@@ -389,8 +398,10 @@ let verify_signature ~primary_key ~target ~sig_pkt =
       | V3sig s -> s.v3s_hash_alg | V4sig s -> s.v4s_hash_alg in
     let sig_mpis = match parsed with
       | V3sig s -> s.v3s_mpis | V4sig s -> s.v4s_mpis in
+    let sig_version = match parsed with
+      | V3sig _ -> 3 | V4sig _ -> 4 in
 
-    let signed_data = build_signed_data ~primary_key ~target sigtype in
+    let signed_data = build_signed_data ~primary_key ~target ~sig_version sigtype in
     let (_, trailer) = match parsed with
       | V3sig s -> v3_sig_trailer s
       | V4sig _ -> v4_sig_trailer sig_pkt.packet_body
