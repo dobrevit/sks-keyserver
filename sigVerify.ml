@@ -171,8 +171,21 @@ let check_hash_tag ~primary_key ~target ~sig_pkt =
     h#add_string signed_data;
     h#add_string trailer;
     let digest = h#result in
-    Char.code digest.[0] = Char.code hash_value.[0]
-    && Char.code digest.[1] = Char.code hash_value.[1]
+    let matches =
+      Char.code digest.[0] = Char.code hash_value.[0]
+      && Char.code digest.[1] = Char.code hash_value.[1] in
+    if not matches && !Settings.debuglevel >= 5 then begin
+      let pk_version = Char.code primary_key.packet_body.[0] in
+      Common.plerror 5
+        "hashtag-mismatch expected=%02X%02X computed=%02X%02X \
+         sigv=%d pk_v=%d pk_len=%d sd_len=%d tr_len=%d"
+        (Char.code hash_value.[0]) (Char.code hash_value.[1])
+        (Char.code digest.[0]) (Char.code digest.[1])
+        sig_version pk_version
+        (String.length primary_key.packet_body)
+        (String.length signed_data) (String.length trailer)
+    end;
+    matches
   with _ -> true  (* if we can't check, keep the sig *)
 
 

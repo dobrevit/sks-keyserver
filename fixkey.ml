@@ -242,6 +242,8 @@ let drop_implausible pkey =
         | None -> false
     with _ -> false
   in
+  let hash_drops = ref 0 in
+  let type_drops = ref 0 in
   let filter_sigs target_label target allowed_3p_types sigs =
     List.filter sigs ~f:(fun sig_pkt ->
       if is_selfsig sig_pkt then true  (* leave for invalidSelfSig *)
@@ -255,37 +257,47 @@ let drop_implausible pkey =
           List.mem sigtype ~set:allowed_3p_types
         with _ -> false in
         let keep = hash_ok && type_ok in
-        if not keep && !Settings.debuglevel >= 4 then begin
-          let (sig_ver, sigtype, hash_alg, issuer_hex) = try
-            let parsed = ParsePGP.parse_signature sig_pkt in
-            let ver = match parsed with
-              | V3sig _ -> 3 | V4sig _ -> 4 in
-            let st = match parsed with
-              | V3sig s -> s.v3s_sigtype | V4sig s -> s.v4s_sigtype in
-            let ha = match parsed with
-              | V3sig s -> s.v3s_hash_alg | V4sig s -> s.v4s_hash_alg in
-            let iss = match ParsePGP.sig_issuer_keyid parsed with
-              | Some k -> Utils.hexstring k | None -> "unknown" in
-            (ver, st, ha, iss)
-          with _ -> (0, 0, 0, "parse-error") in
-          plerror 4
-            "implaus-drop key=%s target=%s sigv=%d type=0x%02X \
-             hash_alg=%d issuer=%s hash_ok=%b type_ok=%b"
-            keyid_hex target_label sig_ver sigtype
-            hash_alg issuer_hex hash_ok type_ok
+        if not keep then begin
+          if not hash_ok then incr hash_drops;
+          if not type_ok then incr type_drops;
+          if !Settings.debuglevel >= 6 then begin
+            let (sig_ver, sigtype, hash_alg, issuer_hex) = try
+              let parsed = ParsePGP.parse_signature sig_pkt in
+              let ver = match parsed with
+                | V3sig _ -> 3 | V4sig _ -> 4 in
+              let st = match parsed with
+                | V3sig s -> s.v3s_sigtype | V4sig s -> s.v4s_sigtype in
+              let ha = match parsed with
+                | V3sig s -> s.v3s_hash_alg | V4sig s -> s.v4s_hash_alg in
+              let iss = match ParsePGP.sig_issuer_keyid parsed with
+                | Some k -> Utils.hexstring k | None -> "unknown" in
+              (ver, st, ha, iss)
+            with _ -> (0, 0, 0, "parse-error") in
+            plerror 6
+              "implaus-drop key=%s target=%s sigv=%d type=0x%02X \
+               hash_alg=%d issuer=%s hash_ok=%b type_ok=%b"
+              keyid_hex target_label sig_ver sigtype
+              hash_alg issuer_hex hash_ok type_ok
+          end
         end;
         keep)
   in
-  { pkey with
-    selfsigs = filter_sigs "direct" SigVerify.Direct_key
-                 allowed_3p_direct_sigtypes pkey.selfsigs;
-    uids = List.map pkey.uids ~f:(fun (uid, sigs) ->
-      (uid, filter_sigs "uid" (SigVerify.Uid_target uid)
-              allowed_3p_uid_sigtypes sigs));
-    subkeys = List.map pkey.subkeys ~f:(fun (sk, sigs) ->
-      (sk, filter_sigs "subkey" (SigVerify.Subkey_target sk)
-              allowed_3p_subkey_sigtypes sigs));
-  }
+  let result =
+    { pkey with
+      selfsigs = filter_sigs "direct" SigVerify.Direct_key
+                   allowed_3p_direct_sigtypes pkey.selfsigs;
+      uids = List.map pkey.uids ~f:(fun (uid, sigs) ->
+        (uid, filter_sigs "uid" (SigVerify.Uid_target uid)
+                allowed_3p_uid_sigtypes sigs));
+      subkeys = List.map pkey.subkeys ~f:(fun (sk, sigs) ->
+        (sk, filter_sigs "subkey" (SigVerify.Subkey_target sk)
+                allowed_3p_subkey_sigtypes sigs));
+    } in
+  let total = !hash_drops + !type_drops in
+  if total > 0 && !Settings.debuglevel >= 4 then
+    plerror 4 "implaus key=%s dropped=%d hash=%d type=%d"
+      keyid_hex total !hash_drops !type_drops;
+  result
 
 (** drop:invalidSelfSig — remove self-sigs that fail full cryptographic
     verification.  If a UID/subkey loses all self-sigs, it is dropped.
@@ -450,8 +462,8 @@ let canonicalize key =
         let c6 = pkey_packet_count pkey in
         let result = dedup_key_from_pkey pkey in
         let c7 = List.length result in
-        if c7 <> raw_count && !Settings.debuglevel >= 4 then
-          plerror 4
+        if c7 <> raw_count && !Settings.debuglevel >= 5 then
+          plerror 5
             "  filter-trace raw=%d pre=%d uat=%d unparse=%d \
              implaus=%d selfsig=%d unbound=%d revcruf=%d dedup=%d"
             raw_count c0 c1 c2 c3 c4 c5 c6 c7;
