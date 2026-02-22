@@ -212,26 +212,13 @@ let has_selfsig primary_keyid sigs =
        | None -> false)
     with _ -> false)
 
-(** Third-party sig types that Hockeypuck keeps per component.
-    Hockeypuck's SigInfo() on each component filters by type AFTER
-    plausibility-checking third-party sigs:
-    - Primary key: KeyRevocation (0x20), DirectSignature (0x1F)
-      (pubkey.go:308-311)
-    - UID: GenericCert..PositiveCert (0x10-0x13),
-      CertificationRevocation (0x30)  (userid.go:140-143)
-    - Subkey: SubkeyRevocation (0x28) only  (subkey.go:103-107)
-*)
-let allowed_3p_direct_sigtypes = [0x1F; 0x20]
-let allowed_3p_uid_sigtypes = [0x10; 0x11; 0x12; 0x13; 0x30]
-let allowed_3p_subkey_sigtypes = [0x28]
-
 (** drop:implausible — remove third-party sigs that fail the 2-byte
-    hash-tag check OR have a sig type that Hockeypuck would discard.
-    This recomputes the hash over RFC 4880 signed data and compares
-    the first 2 bytes against the signature's hash_value field.
+    hash-tag check.  This recomputes the hash over RFC 4880 signed data
+    and compares the first 2 bytes against the signature's hash_value field.
     Self-sigs are left for drop:invalidSelfSig.
-    See Hockeypuck verify.go hash-tag functions, SigInfo() in
-    pubkey.go, userid.go, subkey.go. *)
+    Note: Hockeypuck's SigInfo() methods classify sig types internally
+    but do NOT remove sigs based on type in the canonical representation.
+    See Hockeypuck verify.go hash-tag functions. *)
 let drop_implausible pkey =
   let primary_keyid = Fingerprint.keyid_from_key ~short:false [pkey.key] in
   let keyid_hex = Utils.hexstring primary_keyid in
@@ -242,24 +229,15 @@ let drop_implausible pkey =
         | None -> false
     with _ -> false
   in
-  let hash_drops = ref 0 in
-  let type_drops = ref 0 in
-  let filter_sigs target_label target allowed_3p_types sigs =
+  let n_dropped = ref 0 in
+  let filter_sigs target_label target sigs =
     List.filter sigs ~f:(fun sig_pkt ->
       if is_selfsig sig_pkt then true  (* leave for invalidSelfSig *)
       else
         let hash_ok =
           SigVerify.check_hash_tag ~primary_key:pkey.key ~target ~sig_pkt in
-        let type_ok = try
-          let parsed = ParsePGP.parse_signature sig_pkt in
-          let sigtype = match parsed with
-            | V3sig s -> s.v3s_sigtype | V4sig s -> s.v4s_sigtype in
-          List.mem sigtype ~set:allowed_3p_types
-        with _ -> false in
-        let keep = hash_ok && type_ok in
-        if not keep then begin
-          if not hash_ok then incr hash_drops;
-          if not type_ok then incr type_drops;
+        if not hash_ok then begin
+          incr n_dropped;
           if !Settings.debuglevel >= 6 then begin
             let (sig_ver, sigtype, hash_alg, issuer_hex) = try
               let parsed = ParsePGP.parse_signature sig_pkt in
@@ -275,28 +253,23 @@ let drop_implausible pkey =
             with _ -> (0, 0, 0, "parse-error") in
             plerror 6
               "implaus-drop key=%s target=%s sigv=%d type=0x%02X \
-               hash_alg=%d issuer=%s hash_ok=%b type_ok=%b"
+               hash_alg=%d issuer=%s"
               keyid_hex target_label sig_ver sigtype
-              hash_alg issuer_hex hash_ok type_ok
+              hash_alg issuer_hex
           end
         end;
-        keep)
+        hash_ok)
   in
   let result =
     { pkey with
-      selfsigs = filter_sigs "direct" SigVerify.Direct_key
-                   allowed_3p_direct_sigtypes pkey.selfsigs;
+      selfsigs = filter_sigs "direct" SigVerify.Direct_key pkey.selfsigs;
       uids = List.map pkey.uids ~f:(fun (uid, sigs) ->
-        (uid, filter_sigs "uid" (SigVerify.Uid_target uid)
-                allowed_3p_uid_sigtypes sigs));
+        (uid, filter_sigs "uid" (SigVerify.Uid_target uid) sigs));
       subkeys = List.map pkey.subkeys ~f:(fun (sk, sigs) ->
-        (sk, filter_sigs "subkey" (SigVerify.Subkey_target sk)
-                allowed_3p_subkey_sigtypes sigs));
+        (sk, filter_sigs "subkey" (SigVerify.Subkey_target sk) sigs));
     } in
-  let total = !hash_drops + !type_drops in
-  if total > 0 && !Settings.debuglevel >= 4 then
-    plerror 4 "implaus key=%s dropped=%d hash=%d type=%d"
-      keyid_hex total !hash_drops !type_drops;
+  if !n_dropped > 0 && !Settings.debuglevel >= 4 then
+    plerror 4 "implaus key=%s dropped=%d" keyid_hex !n_dropped;
   result
 
 (** drop:invalidSelfSig — remove self-sigs that fail full cryptographic
