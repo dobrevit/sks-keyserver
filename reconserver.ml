@@ -356,6 +356,18 @@ struct
                       e ->
                         eplerror 1 e "set_maxnodes Transaction aborting";
                         abort_txnopt txn)
+             | ("recon_stats", `none) ->
+                 let stats = [
+                   sprintf "cache_size=%d"
+                     (match seen_cache with
+                      | None -> 0 | Some c -> SeenCache.size c);
+                   sprintf "cache_capacity=%d"
+                     (match seen_cache with
+                      | None -> 0 | Some c -> SeenCache.capacity c);
+                   sprintf "queue_depth=%d" (Queue.length recover_list);
+                   sprintf "gossip_enabled=%b" (not (gossip_disabled ()));
+                 ] in
+                 marshal cout (ReconStats stats)
              | _ ->
                  failwith "Unexpected config request"
           );

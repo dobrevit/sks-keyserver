@@ -16,6 +16,7 @@ type msg =
   | DeleteKey of string
   | Config of (string * configvar)
   | Filters of string list
+  | ReconStats of string list
 
 val marshal_msg :
   < upcast : #Channel.out_channel_obj; write_byte : int -> unit;

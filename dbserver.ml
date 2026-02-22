@@ -129,6 +129,22 @@ struct
 
   (******************************************************************)
 
+  let query_recon_stats () =
+    try
+      let s = Unix.socket ?cloexec:None
+                ~domain:(Unix.domain_of_sockaddr recon_command_addr)
+                ~kind:Unix.SOCK_STREAM ~protocol:0 in
+      protect ~f:(fun () ->
+        Unix.connect s ~addr:recon_command_addr;
+        let cin = Channel.sys_in_from_fd s in
+        let cout = Channel.sys_out_from_fd s in
+        DbMessages.marshal cout (Config ("recon_stats", `none));
+        match (DbMessages.unmarshal cin).msg with
+        | ReconStats pairs -> pairs
+        | _ -> [])
+      ~finally:(fun () -> Unix.close s)
+    with _ -> []
+
   let get_stats () =
     let today = Stats.round_up_to_day (Unix.gettimeofday ()) in
     let log =
@@ -144,7 +160,8 @@ struct
   let calculate_stats_page () =
     plerror 3 "Calculating DB stats";
     let (log,size) = get_stats () in
-    last_stat_page := Stats.generate_html_stats_page log size;
+    let recon_stats = query_recon_stats () in
+    last_stat_page := Stats.generate_html_stats_page ~recon_stats log size;
     plerror 3 "Done calculating DB stats";
     []
 

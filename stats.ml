@@ -132,7 +132,47 @@ let histogram_to_table time_to_string histogram =
 
 (************************************************************)
 
-let info_tables () =
+let parse_kv_pairs pairs =
+  let tbl = Hashtbl.create ~random:false 8 in
+  List.iter pairs ~f:(fun s ->
+    match String.index_opt s '=' with
+    | Some i ->
+        let k = String.sub s ~pos:0 ~len:i in
+        let v = String.sub s ~pos:(i + 1) ~len:(String.length s - i - 1) in
+        Hashtbl.replace tbl ~key:k ~data:v
+    | None -> ());
+  tbl
+
+let render_recon_status recon_stats =
+  if recon_stats = [] then
+    "<h2>Reconciliation Status</h2>\n\
+     <table summary=\"Reconciliation Status\">\n\
+     <tr><td colspan=\"2\"><em>Reconserver not available</em></td></tr>\n\
+     </table>\r\n"
+  else
+    let kv = parse_kv_pairs recon_stats in
+    let get k = try Hashtbl.find kv k with Not_found -> "?" in
+    let cache_size = try int_of_string (get "cache_size") with _ -> 0 in
+    let cache_cap = try int_of_string (get "cache_capacity") with _ -> 0 in
+    let cache_str =
+      if cache_cap = 0 then "disabled"
+      else sprintf "%d / %d (%.1f%%)" cache_size cache_cap
+             (100. *. float cache_size /. float cache_cap)
+    in
+    let queue_str = sprintf "%s batches pending" (get "queue_depth") in
+    let gossip_str =
+      if get "gossip_enabled" = "true" then "enabled" else "disabled"
+    in
+    sprintf
+      "<h2>Reconciliation Status</h2>\n\
+       <table summary=\"Reconciliation Status\">\n\
+       <tr><td>Seen cache:</td><td>%s</td></tr>\n\
+       <tr><td>Recovery queue:</td><td>%s</td></tr>\n\
+       <tr><td>Gossip:</td><td>%s</td></tr>\n\
+       </table>\r\n"
+      cache_str queue_str gossip_str
+
+let info_tables ?(recon_stats=[]) () =
   let settings =
     sprintf
       "<h2>Settings</h2>
@@ -168,7 +208,6 @@ let info_tables () =
      <tr><td>Filter mode:</td><td>%s</td></tr>
      <tr><td>Filters:</td><td>%s</td></tr>
      <tr><td>Filter policy:</td><td>%s</td></tr>
-     <tr><td>Recon cache size:</td><td>%s</td></tr>
      <tr><td>Gossip interval:</td><td>%.0f min</td></tr>
      <tr><td>Max key size:</td><td>%d bytes</td></tr>
      <tr><td>Max recover:</td><td>%d</td></tr>
@@ -176,24 +215,23 @@ let info_tables () =
       !Settings.filter_mode
       (if !Settings.filters = "" then "(default)" else !Settings.filters)
       !Settings.filter_policy
-      (if !Settings.recon_cache_size = 0 then "disabled"
-       else string_of_int !Settings.recon_cache_size)
       (!Settings.gossip_interval /. 60.)
       !Settings.max_key_size
       !Settings.max_recover
   in
+  let recon_status = render_recon_status recon_stats in
   sprintf "%s\n\n<table summary=\"Keyserver Peers\" width=\"100%%\">
 <tr valign=\"top\"><td>
 %s
 </td><td>
 %s
-</td></tr></table>\r\n%s"
-    settings gossip_peers mail_peers config
+</td></tr></table>\r\n%s%s"
+    settings gossip_peers mail_peers config recon_status
 
 
 (************************************************************)
 
-let generate_html_stats_page log size =
+let generate_html_stats_page ?(recon_stats=[]) log size =
   let log = Array.of_list log in
   let now = Unix.gettimeofday () in
   let num_keys = sprintf "<p>Total number of keys: %d</p>\n" size  in
@@ -205,7 +243,8 @@ let generate_html_stats_page log size =
   if Array.length log = 0 then
     HtmlTemplates.page
       ~title
-      ~body:(info_tables () ^ num_keys ^ "\n<p>No recent transactions</p>")
+      ~body:(info_tables ~recon_stats () ^ num_keys ^
+             "\n<p>No recent transactions</p>")
   else
     let last_time = fst log.(Array.length log - 1) in
     let daily_histogram = histogram_log (60. *. 60. *. 24.) log
@@ -217,7 +256,7 @@ let generate_html_stats_page log size =
     and hourly_table = histogram_to_table time_to_hour hourly_histogram
     in
     let body =
-      info_tables () ^
+      info_tables ~recon_stats () ^
       "<h2>Statistics</h2>" ^
       num_keys ^
       "<h3>Daily Histogram</h3>\n" ^

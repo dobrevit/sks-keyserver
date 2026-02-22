@@ -20,7 +20,7 @@ module F :
       val command_handler :
         'a ->
         < upcast : Channel.in_channel_obj; .. > ->
-        < flush : 'b; upcast : Channel.out_channel_obj; .. > ->
+        < flush : unit; upcast : Channel.out_channel_obj; .. > ->
         Eventloop.timed_event list
       val sync_interval : float
       val sync_tree : unit -> unit

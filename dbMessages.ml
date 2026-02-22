@@ -72,6 +72,7 @@ type msg = | WordQuery of string list
            | DeleteKey of string
            | Config of (string * configvar)
            | Filters of string list
+           | ReconStats of string list
 
 (****  data specific marshallers  ****)
 
@@ -143,6 +144,7 @@ let marshal_msg cout msg =
      | HashRequest x -> cout#write_byte 10; marshal_list ~f:marshal_string cout x
      | Config x ->            cout#write_byte 11; marshal_config cout x
      | Filters x -> cout#write_byte 12; marshal_list ~f:marshal_string cout x
+     | ReconStats x -> cout#write_byte 13; marshal_list ~f:marshal_string cout x
 
 
 let rec unmarshal_msg cin =
@@ -162,6 +164,7 @@ let rec unmarshal_msg cin =
     | 10 -> HashRequest (unmarshal_list ~f:unmarshal_string cin)
     | 11 -> Config (unmarshal_config cin)
     | 12 -> Filters (unmarshal_list ~f:unmarshal_string cin)
+    | 13 -> ReconStats (unmarshal_list ~f:unmarshal_string cin)
     | _ -> failwith "Unexpected message type"
   in
   rval
@@ -210,6 +213,8 @@ let msg_to_string msg =
          )
     | Filters filters -> sprintf "Filters(%s)"
         (String.concat ~sep:"," filters)
+    | ReconStats pairs -> sprintf "ReconStats(%s)"
+        (String.concat ~sep:"," pairs)
 
 
 module M =

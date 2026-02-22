@@ -15,6 +15,6 @@ val round_up_to_hour : float -> float
 val histogram_log :
   now:float -> float -> (float * Common.event) array -> histogram_entry array
 val histogram_to_table : (float -> string) -> histogram_entry array -> string
-val info_tables : unit -> string
-val generate_html_stats_page : (float * Common.event) list -> int -> string
+val info_tables : ?recon_stats:string list -> unit -> string
+val generate_html_stats_page : ?recon_stats:string list -> (float * Common.event) list -> int -> string
 val generate_html_stats_page_nostats : unit -> string
