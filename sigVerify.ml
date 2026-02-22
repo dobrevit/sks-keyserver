@@ -389,20 +389,26 @@ let verify_ecdsa ~key_pkt ~digest ~sig_mpis =
     let point_data = point_mpi.mpi_data in
     let r_mpi = List.nth sig_mpis 0 in
     let s_mpi = List.nth sig_mpis 1 in
+    (* FIPS 186-4 Section 6.4: truncate digest to curve byte length *)
+    let truncate_to n d =
+      if String.length d > n then String.sub d ~pos:0 ~len:n else d in
     if oid = oid_p256 then
+      let d = truncate_to 32 digest in
       (match Mirage_crypto_ec.P256.Dsa.pub_of_octets point_data with
        | Ok pub -> Mirage_crypto_ec.P256.Dsa.verify ~key:pub
-                     (r_mpi.mpi_data, s_mpi.mpi_data) digest
+                     (r_mpi.mpi_data, s_mpi.mpi_data) d
        | Error _ -> false)
     else if oid = oid_p384 then
+      let d = truncate_to 48 digest in
       (match Mirage_crypto_ec.P384.Dsa.pub_of_octets point_data with
        | Ok pub -> Mirage_crypto_ec.P384.Dsa.verify ~key:pub
-                     (r_mpi.mpi_data, s_mpi.mpi_data) digest
+                     (r_mpi.mpi_data, s_mpi.mpi_data) d
        | Error _ -> false)
     else if oid = oid_p521 then
+      let d = truncate_to 66 digest in
       (match Mirage_crypto_ec.P521.Dsa.pub_of_octets point_data with
        | Ok pub -> Mirage_crypto_ec.P521.Dsa.verify ~key:pub
-                     (r_mpi.mpi_data, s_mpi.mpi_data) digest
+                     (r_mpi.mpi_data, s_mpi.mpi_data) d
        | Error _ -> false)
     else raise Unsupported_params  (* unsupported curve — keep conservative *)
   with
