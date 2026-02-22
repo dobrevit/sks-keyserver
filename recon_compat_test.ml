@@ -703,6 +703,71 @@ let test_canonicalize_legacy_mode () =
   Settings.filter_mode := saved
 
 (* ============================================================ *)
+(* V3 hash-tag test with real key from Hockeypuck               *)
+(* ============================================================ *)
+
+let test_v3_hash_tag_real_key () =
+  let keyfile = "key-hp.asc" in
+  if not (Sys.file_exists keyfile) then
+    printf "(skipped: %s not found) " keyfile
+  else begin
+    let text = let ic = open_in keyfile in
+      let n = in_channel_length ic in
+      let s = Bytes.create n in
+      really_input ic s 0 n;
+      close_in ic;
+      Bytes.to_string s in
+    let keys = Armor.decode_pubkey text in
+    let packets = List.hd keys in
+    let pkey = KeyMerge.key_to_pkey packets in
+    let pk_keyid = Fingerprint.keyid_from_key ~short:false [pkey.KeyMerge.key] in
+    (* Find V3 third-party sigs on UIDs and test hash-tag check *)
+    let v3_total = ref 0 in
+    let v3_pass = ref 0 in
+    let v3_fail = ref 0 in
+    List.iter (fun (uid, sigs) ->
+      List.iter (fun sig_pkt ->
+        try
+          let parsed = ParsePGP.parse_signature sig_pkt in
+          let (is_v3, issuer) = match parsed with
+            | Packet.V3sig _ ->
+              let iss = match ParsePGP.sig_issuer_keyid parsed with
+                | Some k -> k | None -> "" in
+              (true, iss)
+            | Packet.V4sig _ -> (false, "") in
+          if is_v3 && issuer <> pk_keyid then begin
+            incr v3_total;
+            let result = SigVerify.check_hash_tag
+              ~primary_key:pkey.KeyMerge.key
+              ~target:(SigVerify.Uid_target uid)
+              ~sig_pkt in
+            if result then incr v3_pass
+            else begin
+              incr v3_fail;
+              (* Dump debug info for the first failure *)
+              if !v3_fail <= 3 then begin
+                let (sigtype, hash_alg, hash_value) = match parsed with
+                  | Packet.V3sig s ->
+                    (s.Packet.v3s_sigtype, s.Packet.v3s_hash_alg,
+                     s.Packet.v3s_hash_value)
+                  | _ -> (0, 0, "") in
+                printf "\n  V3 hash-tag FAIL: issuer=%s sigtype=0x%02X \
+                        hash_alg=%d expected=%02X%02X uid=%S"
+                  (Utils.hexstring issuer)
+                  sigtype hash_alg
+                  (Char.code hash_value.[0]) (Char.code hash_value.[1])
+                  (String.sub uid.Packet.packet_body 0
+                     (min 30 (String.length uid.Packet.packet_body)))
+              end
+            end
+          end
+        with _ -> ()) sigs) pkey.KeyMerge.uids;
+    printf "\n  V3 third-party sigs: total=%d pass=%d fail=%d\n  "
+      !v3_total !v3_pass !v3_fail;
+    test "v3_hash_tag: all V3 third-party sigs pass" (!v3_fail = 0)
+  end
+
+(* ============================================================ *)
 (* Main test runner                                              *)
 (* ============================================================ *)
 
@@ -753,4 +818,6 @@ let run () =
   (* Filter mode tests *)
   test_filter_mode_legacy ();
   test_filter_mode_hockeypuck ();
-  test_canonicalize_legacy_mode ()
+  test_canonicalize_legacy_mode ();
+  (* V3 hash-tag test with real key *)
+  test_v3_hash_tag_real_key ()

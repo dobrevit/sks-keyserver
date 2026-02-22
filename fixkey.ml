@@ -234,6 +234,7 @@ let allowed_3p_subkey_sigtypes = [0x28]
     pubkey.go, userid.go, subkey.go. *)
 let drop_implausible pkey =
   let primary_keyid = Fingerprint.keyid_from_key ~short:false [pkey.key] in
+  let keyid_hex = Utils.hexstring primary_keyid in
   let is_selfsig sig_pkt =
     try match ParsePGP.sig_issuer_keyid
               (ParsePGP.parse_signature sig_pkt) with
@@ -241,27 +242,48 @@ let drop_implausible pkey =
         | None -> false
     with _ -> false
   in
-  let filter_sigs target allowed_3p_types sigs =
+  let filter_sigs target_label target allowed_3p_types sigs =
     List.filter sigs ~f:(fun sig_pkt ->
       if is_selfsig sig_pkt then true  (* leave for invalidSelfSig *)
       else
-        (* Third-party: hash-tag check AND sig-type filter *)
-        SigVerify.check_hash_tag ~primary_key:pkey.key ~target ~sig_pkt
-        && (try
-              let parsed = ParsePGP.parse_signature sig_pkt in
-              let sigtype = match parsed with
-                | V3sig s -> s.v3s_sigtype | V4sig s -> s.v4s_sigtype in
-              List.mem sigtype ~set:allowed_3p_types
-            with _ -> false))
+        let hash_ok =
+          SigVerify.check_hash_tag ~primary_key:pkey.key ~target ~sig_pkt in
+        let type_ok = try
+          let parsed = ParsePGP.parse_signature sig_pkt in
+          let sigtype = match parsed with
+            | V3sig s -> s.v3s_sigtype | V4sig s -> s.v4s_sigtype in
+          List.mem sigtype ~set:allowed_3p_types
+        with _ -> false in
+        let keep = hash_ok && type_ok in
+        if not keep && !Settings.debuglevel >= 4 then begin
+          let (sig_ver, sigtype, hash_alg, issuer_hex) = try
+            let parsed = ParsePGP.parse_signature sig_pkt in
+            let ver = match parsed with
+              | V3sig _ -> 3 | V4sig _ -> 4 in
+            let st = match parsed with
+              | V3sig s -> s.v3s_sigtype | V4sig s -> s.v4s_sigtype in
+            let ha = match parsed with
+              | V3sig s -> s.v3s_hash_alg | V4sig s -> s.v4s_hash_alg in
+            let iss = match ParsePGP.sig_issuer_keyid parsed with
+              | Some k -> Utils.hexstring k | None -> "unknown" in
+            (ver, st, ha, iss)
+          with _ -> (0, 0, 0, "parse-error") in
+          plerror 4
+            "implaus-drop key=%s target=%s sigv=%d type=0x%02X \
+             hash_alg=%d issuer=%s hash_ok=%b type_ok=%b"
+            keyid_hex target_label sig_ver sigtype
+            hash_alg issuer_hex hash_ok type_ok
+        end;
+        keep)
   in
   { pkey with
-    selfsigs = filter_sigs SigVerify.Direct_key
+    selfsigs = filter_sigs "direct" SigVerify.Direct_key
                  allowed_3p_direct_sigtypes pkey.selfsigs;
     uids = List.map pkey.uids ~f:(fun (uid, sigs) ->
-      (uid, filter_sigs (SigVerify.Uid_target uid)
+      (uid, filter_sigs "uid" (SigVerify.Uid_target uid)
               allowed_3p_uid_sigtypes sigs));
     subkeys = List.map pkey.subkeys ~f:(fun (sk, sigs) ->
-      (sk, filter_sigs (SigVerify.Subkey_target sk)
+      (sk, filter_sigs "subkey" (SigVerify.Subkey_target sk)
               allowed_3p_subkey_sigtypes sigs));
   }
 
