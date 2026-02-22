@@ -247,15 +247,14 @@ let merge_pkeys key1 key2 =
   if not (packets_equal key1.key key2.key)
   then None (* merge can only work if keys are the same *)
   else
-    Some (apply_limits
-      { key = key1.key;
-        selfsigs = Utils.dedup (key1.selfsigs @ key2.selfsigs);
-        (* this might be wrong.  Must the revocations
-           be separated out to go before the other self
-           signatures? *)
-        uids = merge_sigpair_lists key1.uids key2.uids;
-        subkeys = merge_sigpair_lists key1.subkeys key2.subkeys;
-      })
+    Some { key = key1.key;
+           selfsigs = Utils.dedup (key1.selfsigs @ key2.selfsigs);
+           (* this might be wrong.  Must the revocations
+              be separated out to go before the other self
+              signatures? *)
+           uids = merge_sigpair_lists key1.uids key2.uids;
+           subkeys = merge_sigpair_lists key1.subkeys key2.subkeys;
+         }
 
 (*******************************************************************)
 (*******************************************************************)
@@ -293,7 +292,6 @@ let dedup_sigpairs pairs =
 
 
 let dedup_pkey pkey =
-  apply_limits
     { pkey with
         selfsigs = Utils.dedup pkey.selfsigs;
         uids = dedup_sigpairs pkey.uids;
