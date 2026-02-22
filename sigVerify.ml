@@ -39,6 +39,60 @@ let hash_digest_size = function
 (***  RFC 4880 Signed Data Reconstruction  ****************************)
 (**********************************************************************)
 
+(** Compute the "effective" key body — the portion that go-crypto's
+    serializeWithoutHeaders would produce.  Go-crypto re-serializes from
+    parsed fields (version + timestamp + [expiry] + algorithm + MPIs),
+    so any trailing bytes after the last MPI are excluded.  The stored
+    hash_value in signatures was computed by the signer using proper
+    serialization, so the hash must be computed over this truncated body.
+    Returns the original body unchanged if parsing fails or algorithm is
+    unknown (conservative). *)
+let effective_key_body pk_body =
+  try
+    let len = String.length pk_body in
+    let pos = ref 0 in
+    let read_byte () =
+      if !pos >= len then raise Exit;
+      let b = Char.code pk_body.[!pos] in
+      pos := !pos + 1; b in
+    let skip n =
+      if !pos + n > len then raise Exit;
+      pos := !pos + n in
+    let skip_mpi () =
+      let hi = read_byte () in
+      let lo = read_byte () in
+      let bits = (hi lsl 8) lor lo in
+      skip ((bits + 7) / 8) in
+    let version = read_byte () in
+    skip 4;  (* timestamp *)
+    (match version with 2 | 3 -> skip 2 | _ -> ());  (* expiry *)
+    let algo = read_byte () in
+    (match version with 5 | 6 -> skip 4 | _ -> ());  (* key material length *)
+    (match algo with
+     | 1 | 2 | 3 ->       (* RSA: n, e *)
+       skip_mpi (); skip_mpi ()
+     | 16 | 20 ->          (* ElGamal: p, g, y *)
+       skip_mpi (); skip_mpi (); skip_mpi ()
+     | 17 ->               (* DSA: p, q, g, y *)
+       skip_mpi (); skip_mpi (); skip_mpi (); skip_mpi ()
+     | 18 ->               (* ECDH: OID + point MPI + KDF params *)
+       let oid_len = read_byte () in
+       skip oid_len; skip_mpi ();
+       let kdf_len = read_byte () in
+       skip kdf_len
+     | 19 | 22 ->          (* ECDSA / EdDSA legacy: OID + point MPI *)
+       let oid_len = read_byte () in
+       skip oid_len; skip_mpi ()
+     | 25 | 26 -> skip 32  (* X25519 / X448: 32 raw bytes *)
+     | 27 -> skip 32       (* Ed25519 RFC 9580: 32 raw bytes *)
+     | 28 -> skip 57       (* Ed448 RFC 9580: 57 raw bytes *)
+     | _ -> pos := len);   (* unknown algo: keep full body *)
+    if !pos < len then
+      String.sub pk_body ~pos:0 ~len:!pos
+    else
+      pk_body
+  with _ -> pk_body  (* on any error, return original *)
+
 (** Build key material header per RFC 4880 Section 5.2.4.
     V3/V4: 0x99 + 2-byte BE length.
     V5/V6: 0x9B + 4-byte BE length. *)
@@ -114,7 +168,7 @@ type sig_target =
     V3 UID certifications omit the UID header (RFC 4880 Section 5.2.4).
     See also go-crypto: userIdSignatureV3Hash vs userIdSignatureHash. *)
 let build_signed_data ~primary_key ~target ~sig_version sigtype =
-  let pk_body = primary_key.packet_body in
+  let pk_body = effective_key_body primary_key.packet_body in
   let pk_version = Char.code pk_body.[0] in
   let key_hdr = key_material_header pk_version (String.length pk_body) in
   match sigtype with
@@ -135,10 +189,11 @@ let build_signed_data ~primary_key ~target ~sig_version sigtype =
     (* Subkey binding / primary key binding / subkey revocation *)
     (match target with
      | Subkey_target sk_pkt ->
-       let sk_version = Char.code sk_pkt.packet_body.[0] in
+       let sk_body = effective_key_body sk_pkt.packet_body in
+       let sk_version = Char.code sk_body.[0] in
        let sk_hdr = key_material_header sk_version
-                      (String.length sk_pkt.packet_body) in
-       key_hdr ^ pk_body ^ sk_hdr ^ sk_pkt.packet_body
+                      (String.length sk_body) in
+       key_hdr ^ pk_body ^ sk_hdr ^ sk_body
      | _ -> raise Exit)
   | 0x1F | 0x20 ->
     (* Direct key signature / key revocation *)
@@ -178,35 +233,16 @@ let check_hash_tag ~primary_key ~target ~sig_pkt =
       let pk_body = primary_key.packet_body in
       let pk_version = Char.code pk_body.[0] in
       let pk_algo = Char.code pk_body.[5] in
-      (* Compute expected body length from MPIs *)
-      let mpi_end = try
-        let cin = new Channel.string_in_channel pk_body 0 in
-        ignore (cin#read_byte);           (* version *)
-        ignore (cin#read_int64_size 4);   (* timestamp *)
-        (match pk_version with 2 | 3 -> ignore (cin#read_int_size 2) | _ -> ());
-        ignore (cin#read_byte);           (* algorithm *)
-        (match pk_version with 5 | 6 -> ignore (cin#read_int_size 4) | _ -> ());
-        let n_mpis = match pk_algo with
-          | 1 | 2 | 3 -> 2   (* RSA: n, e *)
-          | 16 | 20 -> 3     (* ElGamal: p, g, y *)
-          | 17 -> 4          (* DSA: p, q, g, y *)
-          | _ -> 0 in
-        for _i = 1 to n_mpis do
-          ignore (ParsePGP.read_mpi cin)
-        done;
-        ignore (cin#read_byte); (* probe: will raise if exactly at end *)
-        -1  (* if we get here, there ARE trailing bytes *)
-      with End_of_file -> 0  (* no trailing bytes, MPIs consumed all *)
-         | _ -> -1 in
-      let trail = String.length pk_body - (if mpi_end = 0 then
-        String.length pk_body else 0) in
+      let eff_len = String.length (effective_key_body pk_body) in
+      let trail = String.length pk_body - eff_len in
       Common.plerror 5
         "hashtag-mismatch expected=%02X%02X computed=%02X%02X \
-         sigv=%d pk_v=%d pk_algo=%d pk_len=%d sd_len=%d tr_len=%d trail=%d"
+         sigv=%d pk_v=%d pk_algo=%d pk_len=%d eff_len=%d sd_len=%d \
+         tr_len=%d trail=%d"
         (Char.code hash_value.[0]) (Char.code hash_value.[1])
         (Char.code digest.[0]) (Char.code digest.[1])
         sig_version pk_version pk_algo
-        (String.length pk_body)
+        (String.length pk_body) eff_len
         (String.length signed_data) (String.length trailer) trail
     end;
     matches
