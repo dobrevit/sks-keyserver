@@ -393,6 +393,13 @@ let drop_hard_revoked_cruft pkey =
 let tag_bad_key name f x =
   try f x with Bad_key -> raise (Bad_key_at name)
 
+let pkey_packet_count pkey =
+  1 + List.length pkey.selfsigs
+  + List.fold_left pkey.uids ~init:0
+      ~f:(fun acc (_uid, sigs) -> acc + 1 + List.length sigs)
+  + List.fold_left pkey.subkeys ~init:0
+      ~f:(fun acc (_sk, sigs) -> acc + 1 + List.length sigs)
+
 let canonicalize key =
   if is_revocation_signature (List.hd key)
     then raise Standalone_revocation_certificate;
@@ -403,15 +410,30 @@ let canonicalize key =
         let pkey = key_to_pkey key in
         dedup_key_from_pkey pkey
     | _ ->
+        let raw_count = List.length key in
         let packets = pre_filter key in
         let pkey = key_to_pkey packets in
+        let c0 = pkey_packet_count pkey in
         let pkey = drop_uat pkey in
+        let c1 = pkey_packet_count pkey in
         let pkey = drop_unparseable pkey in
+        let c2 = pkey_packet_count pkey in
         let pkey = tag_bad_key "drop_implausible" drop_implausible pkey in
+        let c3 = pkey_packet_count pkey in
         let pkey = tag_bad_key "drop_invalid_selfsig" drop_invalid_selfsig pkey in
+        let c4 = pkey_packet_count pkey in
         let pkey = tag_bad_key "drop_unbound" drop_unbound pkey in
+        let c5 = pkey_packet_count pkey in
         let pkey = drop_hard_revoked_cruft pkey in
-        dedup_key_from_pkey pkey
+        let c6 = pkey_packet_count pkey in
+        let result = dedup_key_from_pkey pkey in
+        let c7 = List.length result in
+        if c7 <> raw_count && !Settings.debuglevel >= 4 then
+          plerror 4
+            "  filter-trace raw=%d pre=%d uat=%d unparse=%d \
+             implaus=%d selfsig=%d unbound=%d revcruf=%d dedup=%d"
+            raw_count c0 c1 c2 c3 c4 c5 c6 c7;
+        result
   with Unparseable_packet_sequence -> raise (Bad_key_at "unparseable_sequence")
 
 (**********************************************************************)
